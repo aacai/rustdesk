@@ -53,6 +53,7 @@ class _MqttSendPageState extends State<MqttSendPage> {
   @override
   void initState() {
     super.initState();
+    // MQTT 由 MqttCoordinator 单例在 app 启动时常驻连接，页面只订阅其状态流。
     _sub = MqttCoordinator.instance.onControllerUpMessage.listen(_onUp);
   }
 

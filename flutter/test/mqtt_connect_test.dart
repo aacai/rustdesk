@@ -1,102 +1,91 @@
-import 'dart:convert';
+import 'dart:async';
 import 'dart:io';
 
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:mqtt_client/mqtt_client.dart';
-import 'package:mqtt_client/mqtt_server_client.dart';
+import 'package:flutter_hbb/common/mqtt_coordinator.dart';
 import 'package:path/path.dart' as p;
 
-// Standalone MQTT connectivity diagnostic.
+// REAL integration tests for the MQTT single-connection coordinator.
+//
+// These tests drive the REAL MqttCoordinator via startForTest(),
+// exercising the single MQTT connection that replaces the former
+// dual _manager + _controller architecture.
 //
 // Run with:  flutter test test/mqtt_connect_test.dart
-//
-// It tries to connect with the same broker parameters used by the app and
-// prints the exact failure reason so the "连不上" problem can be located
-// (network / credentials / TLS / CA).
 
-const String kHost = 's5ebe39b.ala.cn-hangzhou.emqxsl.cn';
-const int kPort = 8883;
-const String kUsername = 'd91a4b87';
-const String kPassword = 'E-PBKk3Bw_pU88zN';
-
+/// Load CA the SAME way the app does (assets/emqxsl-ca.crt via rootBundle,
+/// with a file fallback for the test runner).
 Future<String> _loadCa() async {
-  final file = File(p.join(Directory.current.path, 'assets', 'emqxsl-ca.crt'));
-  if (!await file.exists()) {
-    throw StateError('CA cert not found at ${file.path}');
+  try {
+    return await rootBundle.loadString('assets/emqxsl-ca.crt');
+  } catch (_) {
+    final file = File(p.join(Directory.current.path, 'assets', 'emqxsl-ca.crt'));
+    if (await file.exists()) return file.readAsStringSync();
+    throw StateError('CA cert not found');
   }
-  return file.readAsStringSync();
 }
 
-Future<MqttServerClient?> _tryConnect({
-  required String clientId,
-  required String caPem,
-  required bool customCa,
-  String uname = kUsername,
-  String pass = kPassword,
-  int timeout = 15,
-}) async {
-  final client = MqttServerClient(kHost, clientId);
-  client.port = kPort;
-  client.keepAlivePeriod = 60;
-  client.autoReconnect = false;
-  client.secure = true;
-  client.connectTimeoutPeriod = timeout;
-  // NOTE: do NOT use `client.onBadCertificate =` — mqtt_client 10.5.1 casts
-  // it to `bool Function(Object)?` and throws at runtime. Rely on the loaded
-  // CA (the app's MqttManager does the same and connects fine).
-  final ctx = SecurityContext(withTrustedRoots: true);
-  if (customCa) {
-    ctx.setTrustedCertificatesBytes(utf8.encode(caPem));
+Future<bool> _waitFor(bool Function() f, {int seconds = 25}) async {
+  for (var i = 0; i < seconds * 4; i++) {
+    if (f()) return true;
+    await Future.delayed(const Duration(milliseconds: 250));
   }
-  client.securityContext = ctx;
-  client.connectionMessage = MqttConnectMessage()
-    ..withClientIdentifier(clientId)
-    ..authenticateAs(uname, pass)
-    ..startClean();
-  try {
-    await client.connect();
-    final ok = client.connectionStatus?.state == MqttConnectionState.connected;
-    print('  -> connected: $ok  (state=${client.connectionStatus?.state})');
-    return ok ? client : null;
-  } catch (e, st) {
-    print('  -> FAILED: $e');
-    print(st);
-    return null;
-  }
+  return false;
 }
 
 void main() {
-  test('mqtt connect diagnostic', () async {
+  setUpAll(() {
+    TestWidgetsFlutterBinding.ensureInitialized();
+  });
+
+  Future<void> _holdAndRecheck(MqttCoordinator coord,
+      {int wait = 25, int hold = 15}) async {
+    expect(await _waitFor(() => coord.isConnected, seconds: wait), isTrue,
+        reason: 'MqttCoordinator failed to connect');
+    await Future.delayed(Duration(seconds: hold));
+    expect(coord.isConnected, isTrue,
+        reason: 'MqttCoordinator dropped during the $hold"s hold');
+  }
+
+  test('REAL coordinator: single connection stays connected for 15s', () async {
     final ca = await _loadCa();
-    print('CA loaded, length=${ca.length}');
+    final coord = MqttCoordinator.instance;
+    coord.startForTest('test-dev-001', ca);
+    await _holdAndRecheck(coord, hold: 15);
+    coord.stop();
+  });
 
-    print('--- A: custom CA (app device/controller style) ---');
-    var c = await _tryConnect(
-        clientId: 'test-a-${DateTime.now().millisecondsSinceEpoch}',
-        caPem: ca,
-        customCa: true);
-    final aOk = c != null;
-    c?.disconnect();
+  test('REAL coordinator: second open reconnects and stays', () async {
+    final ca = await _loadCa();
+    final coord = MqttCoordinator.instance;
 
-    print('--- B: system roots only (no custom CA) ---');
-    c = await _tryConnect(
-        clientId: 'test-b-${DateTime.now().millisecondsSinceEpoch}',
-        caPem: ca,
-        customCa: false);
-    final bOk = c != null;
-    c?.disconnect();
+    coord.startForTest('test-dev-002', ca);
+    expect(await _waitFor(() => coord.isConnected), isTrue,
+        reason: 'first open should connect');
+    await Future.delayed(const Duration(seconds: 3));
+    coord.stop();
 
-    print('--- C: swapped (secret as username, appid as password) ---');
-    c = await _tryConnect(
-        clientId: 'test-c-${DateTime.now().millisecondsSinceEpoch}',
-        caPem: ca,
-        customCa: true,
-        uname: kPassword,
-        pass: kUsername);
-    final cOk = c != null;
-    c?.disconnect();
+    coord.startForTest('test-dev-002', ca);
+    await _holdAndRecheck(coord, wait: 30, hold: 10);
+    coord.stop();
+  });
 
-    expect(aOk || bOk || cOk, isTrue,
-        reason: 'All connect attempts failed — check network/credentials');
+  test('REAL coordinator: controllerConnected matches isConnected (single connection)',
+      () async {
+    final ca = await _loadCa();
+    final coord = MqttCoordinator.instance;
+    coord.startForTest('test-dev-003', ca);
+
+    expect(await _waitFor(() => coord.isConnected), isTrue,
+        reason: 'coordinator should connect');
+    expect(coord.controllerConnected, isTrue,
+        reason: 'controllerConnected must match isConnected on single connection');
+
+    await Future.delayed(const Duration(seconds: 5));
+    expect(coord.controllerConnected, equals(coord.isConnected),
+        reason: 'controllerConnected and isConnected must always agree');
+
+    coord.stop();
   });
 }

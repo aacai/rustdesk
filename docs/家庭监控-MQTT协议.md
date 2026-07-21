@@ -1,6 +1,6 @@
 # 家庭监控 MQTT 协议（设备端 ↔ 监控端）
 
-> 版本：`1.2.0`  
+> 版本：`1.5.0`  
 > 适用：老人机 / 被控 Android（RustDesk） ↔ 你的家庭监控客户端  
 > 目标：**监控端下发指令即可完成控制**，尽量不需要被控端弹窗确认。
 
@@ -21,12 +21,15 @@
 | 项 | 值 |
 |---|---|
 | Broker | `s5ebe39b.ala.cn-hangzhou.emqxsl.cn` |
-| 端口 | `8883`（MQTT over TLS） |
-| 用户名 | `i2aea494` |
-| 密码 | （与设备端一致，见内部配置） |
+| 端口 | `8084`（WebSocket over TLS，路径 `/mqtt`） |
+| 协议 | `wss://s5ebe39b.ala.cn-hangzhou.emqxsl.cn:8084/mqtt` |
+| 用户名 | `xiangqi_player` |
+| 密码 | `xiangqi2024` |
 | CA | `emqxsl-ca.crt` |
 | QoS | 指令 / 回执 / 心跳默认 **1** |
 | KeepAlive | 60s |
+
+> 设备端与监控端**共用同一组 Broker 参数**（同一 `wss` 地址、同一账号），仅 ClientId 前缀不同。
 
 设备 ClientId 建议：`rd-dev-{deviceId}-{suffix}`  
 监控端 ClientId 建议：`rd-ctl-{userId}-{suffix}`
@@ -290,28 +293,21 @@
   "v": 1,
   "requestId": "grant-1",
   "deviceId": "a1b2c3d4e5f6g7h8",
-  "action": "grant_access",
-  "params": {
-    "controllerId": "987654321",
-    "ttlSec": 7200,
-    "permissions": {
-      "keyboard": true,
-      "clipboard": true,
-      "file": true,
-      "audio": true,
-      "camera": false,
-      "terminal": false
-    },
-    "note": "儿子手机"
-  }
+      "action": "grant_access",
+      "params": {
+        "controllerId": "987654321",
+        "ip": "123.45.67.89",
+        "ttlSec": 7200,
+        "note": "儿子手机"
+      }
 }
 ```
 
 | params | 必填 | 说明 |
 |---|---|---|
-| `controllerId` | 是 | 控制端 RustDesk ID（纯数字字符串） |
+| `controllerId` | 是 | 控制端 RustDesk ID（纯数字字符串）；收到即对该 ID 免密授权 |
+| `ip` | 否 | 控制端网络地址（可选，便于排查 / 局域网辅助）；不参与鉴权 |
 | `ttlSec` | 否 | 有效秒数；**默认 `7200`（2h）**；**最小 `60`**；**最大 `2592000`（30 天）** |
-| `permissions` | 否 | 会话权限；缺省全开常用项（键盘/剪贴板/文件/音频） |
 | `note` | 否 | 仅记录，便于列表展示 |
 
 回执：
@@ -332,8 +328,9 @@
 
 说明：
 
-- 优先走 **ID 白名单自动接听**（对名单内 ID 静默接受）。
-- 若运行环境无法静默接（极端 ROM），回执可附带 `temporaryPassword` 作为降级；正常家庭机应 `temporaryPassword: null`。
+- 收到 `controllerId` 即把该 ID 加入免密名单；该 ID 发起连接时设备**静默接受，无需老人点确认、无需密码**。
+- 连接即全功能（键盘/剪贴板/文件/音频/摄像头等），不再定义任何细粒度权限。
+- 回执 `temporaryPassword` 正常为 `null`（家庭机可静默接听）。
 
 撤销：
 
@@ -384,17 +381,8 @@
   "action": "set_policy",
   "params": {
     "autoAcceptIncoming": true,
-    "silentFileTransfer": true,
-    "enableFileTransfer": true,
     "autoAnswerVoiceCall": true,
-    "enableClipboard": true,
-    "enableKeyboard": true,
-    "enableAudio": true,
-    "enableCamera": true,
-    "enableRecordSession": true,
-    "allowAutoRecordIncoming": true,
-    "hideStopService": true,
-    "denyLanDiscovery": false,  // Deprecated in v1.3.1, kept for compat
+    "watchdogEnabled": true,
     "heartbeatEnabled": true
   }
 }
@@ -407,12 +395,13 @@
 | 字段 | 类型 | 默认建议 | 含义 | 生效时机 |
 |---|---|---|---|---|
 | `heartbeatEnabled` | bool | **`true`** | 是否每 10 秒上报 `rd/v1/up`（`type: heartbeat`） | 立即 |
-| `autoAllowAny` | bool | `false` | **自动允许任何连接**（所有人所有类型直接进） | 下次连接 |
 | `autoAcceptIncoming` | bool | `true` | **自动允许被控**（不弹「接受/拒绝」） | 下次连接 |
 | `autoAnswerVoiceCall` | bool | `true` | 语音通话自动接听（master Android 默认弹确认） | 下次语音 |
 | `watchdogEnabled` | bool | `true` | 启用服务保活（ServiceWatchdog） | 立即 |
 
-优先级：`autoAllowAny > autoAcceptIncoming > autoAnswerVoiceCall > 密码验证 > 弹窗确认`。
+> 设备端 `set_policy`/`get_policy` **仅识别以上 4 个字段**，其余字段会被忽略（历史协议中的 `silentFileTransfer`/`enableKeyboard`/`enableAudio` 等细粒度开关已在 1.3.1 精简移除）。
+
+优先级：`autoAcceptIncoming > autoAnswerVoiceCall > 密码验证 > 弹窗确认`。
 
 #### 查询
 
@@ -507,7 +496,7 @@
 
 ### 7.1 启动时
 
-1. 连接 Broker（TLS 8883）。
+1. 连接 Broker（`wss://...:8084/mqtt`）。
 2. 订阅固定 topic：
    - `rd/v1/up` ← **设备列表从这里来**（按 `type` 区分 ack / event / heartbeat）
    - `rd/v1/sys/version`
@@ -531,7 +520,6 @@
   "action": "set_policy",
   "params": {
     "autoAcceptIncoming": true,
-    "silentFileTransfer": true,
     "autoAnswerVoiceCall": true,
     "heartbeatEnabled": true
   }
@@ -567,7 +555,6 @@
 
 | 能力 | 能否完全静默 | 做法 |
 |---|---|---|
-| 自动允许任何连接（全覆盖） | 能（策略） | `autoAllowAny` |
 | 自动允许被控 | 能（策略） | `autoAcceptIncoming` |
 
 | 临时免密 | 能（授权名单） | `grant_access` |
@@ -658,12 +645,9 @@ Publish → `rd/v1/cmd`：
   "requestId": "3",
   "deviceId": "a1b2c3d4e5f6g7h8",
   "action": "set_policy",
-  "params": {
-    "autoAllowAny": true,
-    "autoAcceptIncoming": true,
-    "silentFileTransfer": true,
+      "params": {
+        "autoAcceptIncoming": true,
     "autoAnswerVoiceCall": true,
-    "hideStopService": true,
     "heartbeatEnabled": true
   }
 }
@@ -699,6 +683,7 @@ Publish → `rd/v1/cmd`：
 | 1.3.0 | 2026-07-22 | Flutter 层 MQTT 实现（mqtt_manager.dart）；新增 `autoAllowAny` 策略；接入 `serverModel.applyFamilyMqttPolicy()`；删除 Kotlin MQTT 层 |
 | 1.3.1 | 2026-07-22 | 精简协议：删 session 内冗余字段（silentFileTransfer、enableFileTransfer、enableKeyboard 等），授权后直接可用；删 denyLanDiscovery、set_network/get_network（配置内置）；合并 5 topic 为 3 |
 | 1.4.0 | 2026-07-22 | 新增 `set_config`/`get_config`：MQTT 远程读写 ID/Relay 服务器、`relay-server`、`api-server`、`key`；校验失败回 400 |
+| 1.5.0 | 2026-07-22 | 精简授权：`grant_access` 删除 `permissions` 细粒度权限（连接即全功能），改为 `controllerId` + `ip` 免密；删除策略 `autoAllowAny`（仅保留 `autoAcceptIncoming`） |
 
 ---
 
@@ -714,13 +699,14 @@ Publish → `rd/v1/cmd`：
 | 命令分发 (ping/status/policy) | ✅ 已落地 | `MqttManager._handleBuiltIn()` |
 | set_policy / get_policy | ✅ 已落地 | → `_MqttFfiDelegate.applyPolicy()` → FFI 选项 + `serverModel.applyFamilyMqttPolicy()` |
 | set_config / get_config | ✅ 已落地 | → `_MqttFfiDelegate.applyConfig()`/`getConfig()` → `bind.mainSetOption`/`mainGetOptionSync`（`custom-rendezvous-server`/`relay-server`/`api-server`/`key`） |
-| 自动允许任何连接 | ✅ 已落地 | `familyAutoAllowAny` → `sendLoginResponse` 跳过确认 |
+
 | 自动允许被控 | ✅ 已落地 | `familyAutoAcceptIncoming` → 改 approve mode |
 
 | ServiceWatchdog 保活 | ✅ 已落地 | `MainActivity.kt` → `SET_FAMILY_POLICY` MethodChannel |
 | MQTT 断开重连 | ✅ 已落地 | 指数退避重试（2s~120s） |
-| grant / revoke / list | ⬜ 待实现 | 名单落盘 + `is_family_mqtt_granted` |
-| get_update_info / open_download | ⬜ 规划 | 依赖 retained `rd/v1/sys/version` |
+| grant / revoke / list | ✅ 已落地 | `grant_access` 收 `controllerId`+`ip` 即加入免密白名单；`revoke_access`/`revoke_all_access`/`list_grants` 同步实现；`loginRequest` 命中白名单静默接受 |
+| get_update_info | ✅ 已落地 | `MqttManager` → `_cachedSysVersion` + `delegate.appVersion` |
+| open_download | ⬜ 规划 | 依赖 retained `rd/v1/sys/version`，尚未有处理分支 |
 
 ### 已落地的集成接缝（双向同步基础）
 
@@ -736,7 +722,7 @@ Publish → `rd/v1/cmd`：
 
 ## 14. 授权后不需要二次确认的功能
 
-一旦 `autoAcceptIncoming`（或 `autoAllowAny`）授权通过，session 建立后以下功能可直接使用，不需要对端再次确认：
+一旦 `autoAcceptIncoming` 授权通过，session 建立后以下功能可直接使用，不需要对端再次确认：
 
 | 功能 | 说明 |
 |---|---|

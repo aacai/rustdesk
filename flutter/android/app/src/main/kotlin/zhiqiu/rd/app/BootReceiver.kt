@@ -32,7 +32,7 @@ class BootReceiver : BroadcastReceiver() {
 
         val prefs = context.getSharedPreferences(KEY_SHARED_PREFERENCES, FlutterActivity.MODE_PRIVATE)
         if (!prefs.getBoolean(KEY_START_ON_BOOT_OPT, false)) {
-            Log.d(logTag, "start on boot off — MQTT only")
+            Log.d(logTag, "start on boot disabled")
             return
         }
 

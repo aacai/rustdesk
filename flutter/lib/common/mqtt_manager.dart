@@ -72,11 +72,15 @@ class MqttManager {
   final _cmdController = StreamController<MqttCommand>.broadcast();
   Stream<MqttCommand> get onCommand => _cmdController.stream;
 
+  // Upstream message stream (for external consumers to receive kTopicUp / kTopicSysVersion messages)
+  final _upMsgController = StreamController<Map<String, dynamic>>.broadcast();
+  Stream<Map<String, dynamic>> get onUpMessage => _upMsgController.stream;
+
   // Connection state stream
   final _connectionController = StreamController<bool>.broadcast();
   Stream<bool> get onConnectionChanged => _connectionController.stream;
 
-  bool get isConnected => _client?.connectionStatus?.state == MqttConnectionState.connected;
+  bool get isConnected => _connected;
 
   // ---------------------------------------- public API
 
@@ -87,9 +91,11 @@ class MqttManager {
   /// owned by [_onConnected]/[_onDisconnected], not this method.
   void connect() {
     if (_stopping) return;
+    debugPrint('[MqttManager] connect() called (host=$_host:$_port, clientId=$_clientId)');
     _connectOnce().then((_) {
       // State handled in _onConnected.
     }).catchError((e) {
+      debugPrint('[MqttManager] connect() error: $e');
       if (_stopping) return;
       _scheduleReconnect('connect failed: $e');
     });
@@ -168,17 +174,30 @@ class MqttManager {
     _publish(topic, payload, qos);
   }
 
+  /// Publish a command envelope to kTopicCmd.
+  void publishCmd(Map<String, dynamic> payload) {
+    _publish(kTopicCmd, jsonEncode(payload), MqttQos.atLeastOnce);
+  }
+
   // ---------------------------------------- connect internal
 
   Future<void> _connectOnce() async {
-    final client = MqttServerClient(_host, _clientId);
+    // Per the TS reference client, connect over WebSocket Secure (wss) to the
+    // EMQX 8084 listener (path /mqtt) with the xiangqi_player account — not
+    // raw MQTT/TLS on 8883. mqtt_client needs the full wss:// URL (incl. /mqtt)
+    // plus the alternate WS implementation for wss to work.
+    final server = 'wss://$_host:$_port/mqtt';
+    final client = MqttServerClient(server, _clientId);
     client.port = _port;
     client.keepAlivePeriod = _keepAliveSec;
     client.autoReconnect = false;
-    client.secure = true;
+    client.useWebSocket = true;
+    client.useAlternateWebSocketImplementation = true;
+    client.websocketProtocols = ['mqtt'];
     client.onConnected = _onConnected;
     client.onDisconnected = _onDisconnected;
     client.onSubscribed = _onSubscribed;
+    client.connectTimeoutPeriod = 20;
 
     final context = SecurityContext(withTrustedRoots: true)
       ..setTrustedCertificatesBytes(utf8.encode(_caCertPem));
@@ -210,6 +229,7 @@ class MqttManager {
     _connectionController.add(true);
     _client!.subscribe(kTopicCmd, MqttQos.atLeastOnce);
     _client!.subscribe(kTopicSysVersion, MqttQos.atLeastOnce);
+    _client!.subscribe(kTopicUp, MqttQos.atLeastOnce);
     delegate?.onMqttConnected();
     _client!.updates!.listen(_onRawMessage);
     if (_heartbeatEnabled) startHeartbeat();
@@ -241,6 +261,14 @@ class MqttManager {
       if (topic == kTopicSysVersion) {
         try {
           _cachedSysVersion = jsonDecode(raw) as Map<String, dynamic>;
+          _upMsgController.add({'topic': topic, ..._cachedSysVersion!});
+        } catch (_) {}
+        continue;
+      }
+      if (topic == kTopicUp) {
+        try {
+          final json = jsonDecode(raw) as Map<String, dynamic>;
+          _upMsgController.add({'topic': topic, ...json});
         } catch (_) {}
         continue;
       }
@@ -349,6 +377,22 @@ class MqttManager {
           'latest': ver,
         });
         break;
+      case 'grant_access':
+      case 'revoke_access':
+      case 'revoke_all_access':
+      case 'list_grants':
+        final data = delegate?.handleGrant(action, params) ??
+            {'ok': false, 'code': 503, 'message': 'delegate missing'};
+        final ok = data['ok'] == true;
+        _publishAck(
+          requestId,
+          action,
+          ok,
+          ok ? 0 : (data['code'] ?? 400),
+          data['message'] ?? (ok ? 'ok' : 'failed'),
+          data,
+        );
+        break;
     }
   }
 
@@ -428,6 +472,8 @@ abstract class MqttDelegate {
   Map<String, dynamic> buildStatus() => {};
   Map<String, dynamic> buildPolicy() => {};
   void applyPolicy(Map<String, dynamic> params) {}
+  Map<String, dynamic> handleGrant(String action, Map<String, dynamic> params) =>
+      {'ok': false, 'code': 501, 'message': 'unsupported'};
   Map<String, dynamic> getConfig() => {};
   Future<String?> applyConfig(Map<String, dynamic> params) async => null;
   String get appVersion => '';
