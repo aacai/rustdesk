@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools"
-    package="com.carriez.flutter_hbbx">
+    package="zhiqiu.rd.app">
 
     <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE" tools:node="remove" />
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" tools:node="remove" />
@@ -43,7 +43,7 @@
                 <action android:name="android.intent.action.BOOT_COMPLETED" />
                 <action android:name="android.intent.action.QUICKBOOT_POWERON" />
                 <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
-                <action android:name="com.carriez.flutter_hbbx.DEBUG_BOOT_COMPLETED" />
+                <action android:name="zhiqiu.rd.app.DEBUG_BOOT_COMPLETED" />
             </intent-filter>
         </receiver>
 
@@ -52,7 +52,7 @@
             android:enabled="true"
             android:exported="false">
             <intent-filter>
-                <action android:name="com.carriez.flutter_hbbx.WATCHDOG_CHECK" />
+                <action android:name="zhiqiu.rd.app.WATCHDOG_CHECK" />
             </intent-filter>
         </receiver>
 

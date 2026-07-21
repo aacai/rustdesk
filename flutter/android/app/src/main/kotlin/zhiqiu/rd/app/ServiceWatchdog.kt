@@ -1,4 +1,4 @@
-package com.carriez.flutter_hbbx
+package zhiqiu.rd.app
 
 import android.app.ActivityManager
 import android.app.AlarmManager
@@ -14,7 +14,7 @@ import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 import io.flutter.embedding.android.FlutterActivity
 
-const val ACTION_WATCHDOG_CHECK = "com.carriez.flutter_hbbx.WATCHDOG_CHECK"
+const val ACTION_WATCHDOG_CHECK = "zhiqiu.rd.app.WATCHDOG_CHECK"
 const val KEY_WATCHDOG_ENABLED = "KEY_WATCHDOG_ENABLED"
 private const val WATCHDOG_INTERVAL_MS = 15 * 60 * 1000L
 private const val WATCHDOG_REQUEST_CODE = 9001
