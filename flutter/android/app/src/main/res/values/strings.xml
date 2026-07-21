@@ -1,4 +1,5 @@
 <resources>
-    <string name="app_name">RustDesk</string>
-    <string name="accessibility_service_description">Allow other devices to control your phone using virtual touch, when RustDesk screen sharing is established</string>
+    <string name="app_name">速远控</string>
+    <string name="input_service_name">速远控 输入</string>
+    <string name="accessibility_service_description">用于远程触控控制，并在后台尽量保持速远控服务运行（方便家人远程协助）</string>
 </resources>

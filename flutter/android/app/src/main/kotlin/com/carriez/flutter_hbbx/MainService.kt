@@ -1,4 +1,4 @@
-package com.carriez.flutter_hbb
+package com.carriez.flutter_hbbx
 
 import ffi.FFI
 
@@ -46,7 +46,7 @@ import java.nio.ByteBuffer
 import kotlin.math.max
 import kotlin.math.min
 
-const val DEFAULT_NOTIFY_TITLE = "RustDesk"
+const val DEFAULT_NOTIFY_TITLE = "速远控"
 const val DEFAULT_NOTIFY_TEXT = "Service is running"
 const val DEFAULT_NOTIFY_ID = 1
 const val NOTIFY_ID_OFFSET = 100
@@ -244,14 +244,26 @@ class MainService : Service() {
         val prefs = applicationContext.getSharedPreferences(KEY_SHARED_PREFERENCES, FlutterActivity.MODE_PRIVATE)
         val configPath = prefs.getString(KEY_APP_DIR_CONFIG_PATH, "") ?: ""
         FFI.startServer(configPath, "")
+        // FFI ready: push MQTT grant whitelist into Rust connection layer
+        FamilyMqttPolicy.syncGrantsToRust(applicationContext)
 
         createForegroundNotification()
+        ServiceWatchdog.enable(applicationContext)
+        ServiceWatchdog.schedule(applicationContext)
+        RemoteMqttManager.start(applicationContext)
     }
 
     override fun onDestroy() {
         checkMediaPermission()
         stopService(Intent(this, FloatingWindowService::class.java))
+        ServiceWatchdog.schedule(applicationContext, delayMs = 30_000L)
         super.onDestroy()
+    }
+
+    override fun onTaskRemoved(rootIntent: Intent?) {
+        Log.d(logTag, "onTaskRemoved, schedule watchdog revive")
+        ServiceWatchdog.schedule(applicationContext, delayMs = 30_000L)
+        super.onTaskRemoved(rootIntent)
     }
 
     private var isHalfScale: Boolean? = null;
@@ -598,13 +610,13 @@ class MainService : Service() {
     private fun initNotification() {
         notificationManager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         notificationChannel = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val channelId = "RustDesk"
-            val channelName = "RustDesk Service"
+            val channelId = "SuYuanKong"
+            val channelName = "速远控服务"
             val channel = NotificationChannel(
                 channelId,
                 channelName, NotificationManager.IMPORTANCE_HIGH
             ).apply {
-                description = "RustDesk Service Channel"
+                description = "速远控后台服务"
             }
             channel.lightColor = Color.BLUE
             channel.lockscreenVisibility = Notification.VISIBILITY_PRIVATE
