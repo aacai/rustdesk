@@ -14,7 +14,6 @@ class ServiceWatchdogReceiver : BroadcastReceiver() {
         }
         Log.d(logTag, "watchdog tick")
         val app = context.applicationContext
-        MqttCommandService.start(app)
         ServiceWatchdog.reviveMainService(app)
         ServiceWatchdog.schedule(app)
     }

@@ -161,6 +161,12 @@ const String kOptionCurrentAbName = "current-ab-name";
 const String kOptionEnableConfirmClosingTabs = "enable-confirm-closing-tabs";
 const String kOptionAllowAlwaysSoftwareRender = "allow-always-software-render";
 const String kOptionEnableCheckUpdate = "enable-check-update";
+const String kOptionMqttHeartbeat = "mqtt-heartbeat";
+const String kOptionMqttAutoAccept = "mqtt-auto-accept";
+const String kOptionMqttAutoAllowAny = "mqtt-auto-allow-any";
+const String kOptionMqttAutoAnswerVoice = "mqtt-auto-answer-voice";
+const String kOptionMqttDenyLanDiscovery = "mqtt-deny-lan-discovery";
+const String kOptionMqttWatchdog = "mqtt-watchdog";
 const String kOptionAllowAutoUpdate = "allow-auto-update";
 const String kOptionAllowLinuxHeadless = "allow-linux-headless";
 const String kOptionAllowRemoveWallpaper = "allow-remove-wallpaper";
@@ -452,6 +458,7 @@ class AndroidChannel {
   static final kGetStartOnBootOpt = "get_start_on_boot_opt";
   static final kSetStartOnBootOpt = "set_start_on_boot_opt";
   static final kSyncAppDirConfigPath = "sync_app_dir";
+  static final kSetFamilyPolicy = "set_family_policy";
 }
 
 /// flutter/packages/flutter/lib/src/services/keyboard_key.dart -> _keyLabels

@@ -244,13 +244,9 @@ class MainService : Service() {
         val prefs = applicationContext.getSharedPreferences(KEY_SHARED_PREFERENCES, FlutterActivity.MODE_PRIVATE)
         val configPath = prefs.getString(KEY_APP_DIR_CONFIG_PATH, "") ?: ""
         FFI.startServer(configPath, "")
-        // FFI ready: push MQTT grant whitelist into Rust connection layer
-        FamilyMqttPolicy.syncGrantsToRust(applicationContext)
-
         createForegroundNotification()
         ServiceWatchdog.enable(applicationContext)
         ServiceWatchdog.schedule(applicationContext)
-        RemoteMqttManager.start(applicationContext)
     }
 
     override fun onDestroy() {
