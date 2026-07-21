@@ -1,4 +1,4 @@
-package com.carriez.flutter_hbbx
+package zhiqiu.rd.app
 
 import android.Manifest.permission.*
 import android.annotation.SuppressLint
