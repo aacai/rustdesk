@@ -28,7 +28,6 @@ class BootReceiver : BroadcastReceiver() {
         }
 
         val appContext = context.applicationContext
-        MqttCommandService.start(appContext)
         ServiceWatchdog.enable(appContext)
 
         val prefs = context.getSharedPreferences(KEY_SHARED_PREFERENCES, FlutterActivity.MODE_PRIVATE)
