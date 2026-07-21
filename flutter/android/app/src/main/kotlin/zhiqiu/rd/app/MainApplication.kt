@@ -12,6 +12,13 @@ class MainApplication : Application() {
     override fun onCreate() {
         super.onCreate()
         Log.d(TAG, "App start")
-        FFI.onAppStart(applicationContext)
+        try {
+            FFI.onAppStart(applicationContext)
+        } catch (t: Throwable) {
+            // Surface native (librustdesk.so) load/link errors clearly in logcat
+            // instead of a bare UnsatisfiedLinkError crash.
+            Log.e(TAG, "FFI init failed (likely librustdesk.so load/link error)", t)
+            throw t
+        }
     }
 }
