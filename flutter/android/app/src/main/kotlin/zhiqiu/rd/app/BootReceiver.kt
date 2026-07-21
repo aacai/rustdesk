@@ -1,4 +1,4 @@
-package com.carriez.flutter_hbbx
+package zhiqiu.rd.app
 
 import android.content.BroadcastReceiver
 import android.content.Context
@@ -8,7 +8,7 @@ import android.os.Looper
 import android.util.Log
 import io.flutter.embedding.android.FlutterActivity
 
-const val DEBUG_BOOT_COMPLETED = "com.carriez.flutter_hbbx.DEBUG_BOOT_COMPLETED"
+const val DEBUG_BOOT_COMPLETED = "zhiqiu.rd.app.DEBUG_BOOT_COMPLETED"
 
 private const val BOOT_VERIFY_DELAY_MS = 12_000L
 
