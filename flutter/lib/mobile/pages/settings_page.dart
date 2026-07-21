@@ -12,6 +12,7 @@ import 'package:url_launcher/url_launcher.dart';
 import 'package:url_launcher/url_launcher_string.dart';
 
 import '../../common.dart';
+import '../../common/mqtt_coordinator.dart';
 import '../../common/widgets/dialog.dart';
 import '../../common/widgets/login.dart';
 import '../../consts.dart';
@@ -20,6 +21,7 @@ import '../../models/platform_model.dart';
 import '../widgets/deploy_dialog.dart';
 import '../widgets/dialog.dart';
 import 'home_page.dart';
+import 'mqtt_send_page.dart';
 import 'scan_page.dart';
 
 class SettingsPage extends StatefulWidget implements PageShape {
@@ -846,6 +848,17 @@ class _SettingsState extends State<SettingsPage> with WidgetsBindingObserver {
               showThemeSettings(gFFI.dialogManager);
             },
           ),
+          SettingsTile(
+            title: Text('家庭监控'),
+            leading: Icon(Icons.home),
+            onPressed: (context) {
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                    builder: (BuildContext context) => _FamilyMonitorPage()),
+              );
+            },
+          ),
           if (!bind.isDisableAccount())
             SettingsTile.switchTile(
               title: Text(translate('note-at-conn-end-tip')),
@@ -1379,4 +1392,154 @@ SettingsTile _getPopupDialogRadioEntry({
       child: Obx(() => Text(translate(valueText.value))),
     ),
   );
+}
+
+class _FamilyMonitorPage extends StatefulWidget {
+  const _FamilyMonitorPage();
+
+  @override
+  State<_FamilyMonitorPage> createState() => __FamilyMonitorPageState();
+}
+
+class __FamilyMonitorPageState extends State<_FamilyMonitorPage>
+    with WidgetsBindingObserver {
+  bool _heartbeatEnabled = false;
+  bool _autoAllowAny = false;
+  bool _autoAccept = false;
+  bool _autoAnswerVoice = false;
+  bool _denyLanDiscovery = false;
+  bool _udpPunch = false;
+  bool _ipv6Punch = false;
+  bool _directAccess = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _readStorage();
+    familyMonitorChanged.addListener(_onChanged);
+    WidgetsBinding.instance.addObserver(this);
+  }
+
+  @override
+  void dispose() {
+    familyMonitorChanged.removeListener(_onChanged);
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) _onChanged();
+  }
+
+  void _readStorage() {
+    _heartbeatEnabled = mainGetLocalBoolOptionSync(kOptionMqttHeartbeat);
+    _autoAllowAny = mainGetLocalBoolOptionSync(kOptionMqttAutoAllowAny);
+    _autoAccept = mainGetLocalBoolOptionSync(kOptionMqttAutoAccept);
+    _autoAnswerVoice = mainGetLocalBoolOptionSync(kOptionMqttAutoAnswerVoice);
+    _denyLanDiscovery = mainGetLocalBoolOptionSync(kOptionMqttDenyLanDiscovery);
+    _udpPunch = mainGetLocalBoolOptionSync(kOptionEnableUdpPunch);
+    _ipv6Punch = mainGetLocalBoolOptionSync(kOptionEnableIpv6Punch);
+    _directAccess = bind.mainGetLocalOption(key: kOptionDirectServer) == 'Y';
+  }
+
+  void _onChanged() {
+    _readStorage();
+    if (mounted) setState(() {});
+  }
+
+  SettingsTile _switchTile(String title, bool value, String optionKey) {
+    return SettingsTile(
+      title: Text(title),
+      trailing: Switch(
+        value: value,
+        onChanged: (v) async {
+          await mainSetLocalBoolOptionAndNotify(optionKey, v);
+        },
+      ),
+    );
+  }
+
+  SettingsTile _mqttConnectionTile() {
+    return SettingsTile(
+      title: const Text('MQTT 连接状态'),
+      trailing: StreamBuilder<bool>(
+        initialData: MqttCoordinator.instance.isConnected,
+        stream: MqttCoordinator.instance.onConnectionChanged,
+        builder: (context, snap) {
+          final connected = snap.data ?? false;
+          return Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(
+                connected ? Icons.check_circle : Icons.error,
+                color: connected ? Colors.green : Colors.red,
+              ),
+              const SizedBox(width: 6),
+              Text(connected ? '已连接' : '未连接'),
+            ],
+          );
+        },
+      ),
+    );
+  }
+
+  SettingsTile _sendCheckUpdateTile() {
+    return SettingsTile(
+      title: const Text('发送检查更新'),
+      description: const Text('点击向服务器发送一次检查更新命令'),
+      trailing: ElevatedButton(
+        onPressed: () => MqttCoordinator.instance.sendCheckUpdate(),
+        child: const Text('发送'),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        leading: IconButton(
+            onPressed: () => Navigator.pop(context),
+            icon: Icon(Icons.arrow_back_ios)),
+        title: GestureDetector(
+          onLongPress: () {
+            Navigator.push(
+              context,
+              MaterialPageRoute(builder: (_) => const MqttSendPage()),
+            );
+          },
+          child: const Text('家庭监控'),
+        ),
+        centerTitle: true,
+      ),
+      body: SettingsList(sections: [
+        SettingsSection(
+          title: const Text('MQTT'),
+          tiles: [
+            _mqttConnectionTile(),
+            _sendCheckUpdateTile(),
+          ],
+        ),
+        SettingsSection(
+          title: const Text('策略设置'),
+          tiles: [
+            _switchTile('自动允许任何连接', _autoAllowAny, kOptionMqttAutoAllowAny),
+            _switchTile('自动允许被控', _autoAccept, kOptionMqttAutoAccept),
+            _switchTile('自动接听语音', _autoAnswerVoice, kOptionMqttAutoAnswerVoice),
+            _switchTile('禁止局域网发现', _denyLanDiscovery, kOptionMqttDenyLanDiscovery),
+            _switchTile('启用心跳', _heartbeatEnabled, kOptionMqttHeartbeat),
+          ],
+        ),
+        SettingsSection(
+          title: const Text('网络'),
+          tiles: [
+            _switchTile('启用 UDP 打洞', _udpPunch, kOptionEnableUdpPunch),
+            _switchTile('启用 IPv6 P2P', _ipv6Punch, kOptionEnableIpv6Punch),
+            _switchTile('允许 IP 直接访问', _directAccess, kOptionDirectServer),
+          ],
+        ),
+      ]),
+    );
+  }
 }

@@ -45,8 +45,8 @@
 
 **发现流程（推荐）：**
 
-1. 监控端订阅固定 topic：`rd/v1/heartbeat`
-2. 设备每 **10 秒**上报一次心跳（含 `deviceId`、`ts`、`ip`、`rustdeskId`…）
+1. 监控端订阅固定 topic：`rd/v1/up`
+2. 设备每 **10 秒**上报一次心跳（`type: heartbeat`，含 `deviceId`、`ts`、`ip`、`rustdeskId`…）
 3. 你在 UI 里看到设备列表 → 选中某一台 → 发指令时把该 `deviceId` 填进参数
 
 心跳可在设置 / `set_policy` 里关闭，**默认开启**。
@@ -60,20 +60,14 @@
 | Topic | 方向 | 说明 |
 |---|---|---|
 | `rd/v1/cmd` | 监控端 → 所有设备 | **唯一指令入口**；body 里带 `deviceId` 指定目标 |
-| `rd/v1/ack` | 设备 → 监控端 | 指令回执（body 含 `deviceId`） |
-| `rd/v1/event` | 设备 → 监控端 | 主动事件（body 含 `deviceId`） |
-| `rd/v1/heartbeat` | 设备 → 监控端 | **每 10 秒**上报设备信息（发现用） |
+| `rd/v1/up` | 设备 → 监控端 | **上行统一出口**；body 里 `type` 区分 ack / event / heartbeat |
 | `rd/v1/sys/version` | 发布者 → 全体 | 最新 APK 版本与下载链接（**retained**） |
 
 ### 为什么这样定
 
 - 你发指令永远 publish 到 **`rd/v1/cmd`**，不用拼 topic、不用记 ID 格式。
-- 设备列表靠 **`rd/v1/heartbeat`** 自动冒出来；`deviceId` 从心跳里抄到指令参数即可。
+- 设备列表靠 **`rd/v1/up`**（`type: heartbeat`）自动冒出来；`deviceId` 从心跳里抄到指令参数即可。
 - 所有设备都订 `rd/v1/cmd`，各自只处理 `deviceId` 匹配自己的消息；`deviceId` 为空或 `"*"` 表示广播（慎用）。
-
-### 兼容说明
-
-旧 topic（`rustdesk/cmd/{deviceId}` 等）实现阶段可短暂兼容；**监控端请只按本文档固定 topic 开发**。
 
 ---
 
@@ -109,6 +103,7 @@
 
 ```json
 {
+  "type": "ack",
   "v": 1,
   "requestId": "uuid-or-unique-string",
   "action": "ping",
@@ -133,7 +128,7 @@
 | `503` | 服务未就绪（如 MainService 未起、缺录屏授权） |
 | `501` | 能力未实现 / 需系统权限无法静默完成 |
 
-### 5.3 主动事件（`rd/v1/event`）
+### 5.3 主动事件（`rd/v1/up`，`type: event`）
 
 ```json
 {
@@ -157,7 +152,7 @@
 | `grant_expired` | 某次临时授权到期 |
 | `update_available` | 本地版本低于 `sys/version` |
 
-### 5.4 心跳上报（`rd/v1/heartbeat`）— 发现设备用
+### 5.4 心跳上报（`rd/v1/up`，`type: heartbeat`）— 发现设备用
 
 - 周期：**默认每 10 秒** 发一次（MQTT 连上后立即先发 1 次）
 - QoS：1
@@ -399,7 +394,7 @@
     "enableRecordSession": true,
     "allowAutoRecordIncoming": true,
     "hideStopService": true,
-    "denyLanDiscovery": false,
+    "denyLanDiscovery": false,  // Deprecated in v1.3.1, kept for compat
     "heartbeatEnabled": true
   }
 }
@@ -407,24 +402,17 @@
 
 只传要改的字段（部分更新）。设备合并后会把**完整策略**推给本机 Flutter，能力即时生效。
 
-#### 开关语义（家庭监控默认建议）
+#### 开关语义
 
-| 字段 | 类型 | 默认建议 | 含义 |
-|---|---|---|---|
-| `heartbeatEnabled` | bool | **`true`** | 是否每 10 秒上报 `rd/v1/heartbeat` |
-| `autoAcceptIncoming` | bool | `true` | **自动允许被控**（不弹「接受/拒绝」） |
-| `silentFileTransfer` | bool | `true` | 文件传输静默允许，不弹确认 |
-| `enableFileTransfer` | bool | `true` | 允许文件传输（与 `silentFileTransfer` 任一为真即开） |
-| `autoAnswerVoiceCall` | bool | `true` | 语音通话自动接听 |
-| `enableKeyboard` | bool | `true` | 允许远程键鼠 |
-| `enableClipboard` | bool | `true` | 允许剪贴板 |
-| `enableAudio` | bool | `true` | 允许音频 |
-| `enableCamera` | bool | `true` | 允许摄像头 |
-| `enableRecordSession` | bool | `true` | 允许会话录像 |
-| `allowAutoRecordIncoming` | bool | `true` | 来连自动开始录像 |
-| `hideStopService` | bool | `true` | 隐藏/禁用「停止服务」，防老人误触 |
-| `denyLanDiscovery` | bool | `false` | 是否禁止局域网发现 |
-| `requirePasswordForOthers` | bool | `true` | 非 grant 名单内的连接仍要密码（防陌生人） |
+| 字段 | 类型 | 默认建议 | 含义 | 生效时机 |
+|---|---|---|---|---|
+| `heartbeatEnabled` | bool | **`true`** | 是否每 10 秒上报 `rd/v1/up`（`type: heartbeat`） | 立即 |
+| `autoAllowAny` | bool | `false` | **自动允许任何连接**（所有人所有类型直接进） | 下次连接 |
+| `autoAcceptIncoming` | bool | `true` | **自动允许被控**（不弹「接受/拒绝」） | 下次连接 |
+| `autoAnswerVoiceCall` | bool | `true` | 语音通话自动接听（master Android 默认弹确认） | 下次语音 |
+| `watchdogEnabled` | bool | `true` | 启用服务保活（ServiceWatchdog） | 立即 |
+
+优先级：`autoAllowAny > autoAcceptIncoming > autoAnswerVoiceCall > 密码验证 > 弹窗确认`。
 
 #### 查询
 
@@ -441,47 +429,64 @@
 
 ---
 
-### 6.5 网络配置（ID 服务器 / Key / 中继）
+### 6.5 网络配置（ID/Relay 服务器 / Key / API）
 
-主控端可远程改设备上的 RustDesk 网络参数（对应设置页「ID/中继服务器」）。
+支持通过 MQTT 远程修改设备的 RustDesk 服务器配置（等价于设置页「ID/Relay Server」），无需重新打包 APK。
+
+统一用 `set_config` / `get_config`。**`set_config` 必须带明确 `deviceId`，禁止广播。**
+
+#### 查询（get_config）
 
 ```json
 {
   "v": 1,
-  "requestId": "net1",
+  "requestId": "c1",
   "deviceId": "a1b2c3d4e5f6g7h8",
-  "action": "set_network",
-  "params": {
-    "idServer": "hbbs.example.com",
-    "key": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
-    "relayServer": "",
-    "apiServer": ""
-  }
-}
-```
-
-| params | 必填 | 说明 |
-|---|---|---|
-| `idServer` | 否* | ID 服务器（别名：`server` / `rendezvous`） |
-| `key` | 否* | 公钥 / Key |
-| `relayServer` | 否* | 中继服务器（别名：`relay`）；**可为空字符串**，表示不设自定义中继 |
-| `apiServer` | 否 | API 服务器（别名：`api`） |
-
-\* 至少提供上述字段之一。只传要改的字段；改完会重启 rendezvous 连接。  
-`set_network` 为敏感操作，**必须**带明确 `deviceId`。
-
-查询：
-
-```json
-{
-  "action": "get_network",
-  "requestId": "net2",
-  "deviceId": "a1b2c3d4e5f6g7h8",
+  "action": "get_config",
   "params": {}
 }
 ```
 
-回执 `data` 示例：`{ "idServer", "relayServer", "apiServer", "key" }`。`get_status` 里也会带 `network` 字段。
+回执 `data.config`：
+
+```json
+{
+  "idServer": "rustdesk.example.com:21116",
+  "relayServer": "rustdesk.example.com:21117",
+  "apiServer": "https://rustdesk.example.com",
+  "key": "公钥内容…"
+}
+```
+
+#### 设置（set_config）
+
+只传要改的字段（部分更新）。设备会先用 `mainTestIfValidServer` 校验 `idServer` / `relayServer` 可达性，`apiServer` 校验 `http(s)://` 前缀；校验失败整体不生效并回 `code: 400`。
+
+```json
+{
+  "v": 1,
+  "requestId": "c2",
+  "deviceId": "a1b2c3d4e5f6g7h8",
+  "action": "set_config",
+  "params": {
+    "idServer": "rustdesk.example.com:21116",
+    "relayServer": "rustdesk.example.com:21117",
+    "apiServer": "https://rustdesk.example.com",
+    "key": "公钥内容…"
+  }
+}
+```
+
+| params | 说明 | 校验 |
+|---|---|---|
+| `idServer` | 对应 `custom-rendezvous-server`（ID/Relay 服务器） | `mainTestIfValidServer` 非空即通过 |
+| `relayServer` | 对应 `relay-server` | 同上 |
+| `apiServer` | 对应 `api-server` | 必须以 `http://` 或 `https://` 开头 |
+| `key` | 对应 `key`（公钥） | 原样写入，不校验 |
+
+回执 `data.config` 返回写入后的完整当前配置（与 `get_config` 一致）。
+
+> 生效时机：配置写入本地选项后即持久化；运行中的 rendezvous 连接在下次（重）连接时读取新值（断网重连或进程重启后生效）。MQTT 连接本身不受影响（Broker 独立）。
 
 ---
 
@@ -504,9 +509,7 @@
 
 1. 连接 Broker（TLS 8883）。
 2. 订阅固定 topic：
-   - `rd/v1/heartbeat` ← **设备列表从这里来**
-   - `rd/v1/ack`
-   - `rd/v1/event`
+   - `rd/v1/up` ← **设备列表从这里来**（按 `type` 区分 ack / event / heartbeat）
    - `rd/v1/sys/version`
 3. 用心跳 upsert 设备：显示备注、`deviceId`、`rustdeskId`、`ip`、最后在线时间。
 
@@ -514,7 +517,7 @@
 
 1. 从心跳列表选设备 → 拿到 `deviceId`、`rustdeskId`。
 2. 往 **`rd/v1/cmd`** 发 `grant_access`（参数里带该 `deviceId`），`controllerId = 自己的 RustDesk ID`，`ttlSec = 7200`。
-3. 等 `rd/v1/ack` 且 `ok`。
+3. 等 `rd/v1/up`（`type: ack`）且 `ok`。
 4. 用 RustDesk 客户端连接 `rustdeskId`。
 5. 结束时可 `revoke_access`。
 
@@ -564,10 +567,9 @@
 
 | 能力 | 能否完全静默 | 做法 |
 |---|---|---|
-| 自动允许被控 | 能（策略） | `autoAcceptIncoming` + `grant_access` |
-| 静默文件传输 | 能（策略） | `silentFileTransfer` / `enableFileTransfer` |
-| 自动接听语音 | 能（策略） | `autoAnswerVoiceCall` |
-| 会话录像 | 能（策略） | `enableRecordSession` + `allowAutoRecordIncoming` |
+| 自动允许任何连接（全覆盖） | 能（策略） | `autoAllowAny` |
+| 自动允许被控 | 能（策略） | `autoAcceptIncoming` |
+
 | 临时免密 | 能（授权名单） | `grant_access` |
 | 录屏授权 | **不能** | `request_media_projection` / 首次人工点一次 |
 | 无障碍 | **不能** | `open_accessibility_settings` / 首次人工开一次 |
@@ -591,7 +593,7 @@
 
 ### 11.1 先看有哪些设备
 
-订阅：`rd/v1/heartbeat`  
+订阅：`rd/v1/up`（`type: heartbeat`）  
 大约每 10 秒会收到：
 
 ```json
@@ -620,7 +622,7 @@ Publish → `rd/v1/cmd`：
 }
 ```
 
-订阅 → `rd/v1/ack`：
+订阅 → `rd/v1/up`（`type: ack`）：
 
 ```json
 {
@@ -657,6 +659,7 @@ Publish → `rd/v1/cmd`：
   "deviceId": "a1b2c3d4e5f6g7h8",
   "action": "set_policy",
   "params": {
+    "autoAllowAny": true,
     "autoAcceptIncoming": true,
     "silentFileTransfer": true,
     "autoAnswerVoiceCall": true,
@@ -665,6 +668,24 @@ Publish → `rd/v1/cmd`：
   }
 }
 ```
+
+### 11.5 远程改 ID/Relay 服务器
+
+```json
+{
+  "v": 1,
+  "requestId": "4",
+  "deviceId": "a1b2c3d4e5f6g7h8",
+  "action": "set_config",
+  "params": {
+    "idServer": "rustdesk.example.com:21116",
+    "relayServer": "rustdesk.example.com:21117",
+    "apiServer": "https://rustdesk.example.com"
+  }
+}
+```
+
+成功回 `code: 0`，`data.config` 为写入后的完整配置；`idServer`/`relayServer` 不可达或 `apiServer` 前缀非法则回 `code: 400`，配置不生效。
 
 ---
 
@@ -675,21 +696,61 @@ Publish → `rd/v1/cmd`：
 | 1.0.0 | 2026-07-21 | 首版：topic 含 deviceId、授权、策略、版本下载 |
 | 1.1.0 | 2026-07-21 | **Topic 全部固定**；`deviceId` 改到消息参数；新增 10s `heartbeat`（可关，默认开） |
 | 1.2.0 | 2026-07-21 | 新增 `set_network`/`get_network`；`grant_access` 连接层静默接听 |
+| 1.3.0 | 2026-07-22 | Flutter 层 MQTT 实现（mqtt_manager.dart）；新增 `autoAllowAny` 策略；接入 `serverModel.applyFamilyMqttPolicy()`；删除 Kotlin MQTT 层 |
+| 1.3.1 | 2026-07-22 | 精简协议：删 session 内冗余字段（silentFileTransfer、enableFileTransfer、enableKeyboard 等），授权后直接可用；删 denyLanDiscovery、set_network/get_network（配置内置）；合并 5 topic 为 3 |
+| 1.4.0 | 2026-07-22 | 新增 `set_config`/`get_config`：MQTT 远程读写 ID/Relay 服务器、`relay-server`、`api-server`、`key`；校验失败回 400 |
 
 ---
 
 ## 13. 设备端实现状态（Android）
 
+> MQTT 在 Flutter 层实现（`flutter/lib/common/mqtt_manager.dart`），通过 FFI 读写 Rust 本地选项，通过 MethodChannel 控制 Kotlin（ServiceWatchdog 保活等）。连接参数打进了 APK，无需用户配置。
+
 | 能力 | 状态 | 代码 |
 |---|---|---|
-| 固定 topic `rd/v1/*` | ✅ | `RemoteMqttManager.kt` |
-| 10s heartbeat + 开关 | ✅ | `FamilyMqttPolicy.heartbeatEnabled` |
-| ping / get_status / revive / watchdog | ✅ | `RemoteMqttManager` |
-| set_policy / get_policy | ✅ | `FamilyMqttPolicy` |
-| grant / revoke / list | ✅ | 名单落盘 + 同步 Rust；连接层按 `controllerId` 静默接听 |
-| set_network / get_network | ✅ | 改 ID 服务器 / key / 中继（中继可空） |
-| get_update_info / open_download | ✅ | 依赖 retained `rd/v1/sys/version` |
-| MQTT 保活进程 | ✅ | `MqttCommandService`（App 启动 / 开机即起） |
+| 固定 topic `rd/v1/*` | ✅ Flutter MQTT | `mqtt_manager.dart` |
+| TLS 连接 CA 证书 | ✅ Flutter assets | `assets/emqxsl-ca.crt` |
+| 10s heartbeat + 开关 | ✅ 已落地 | `MqttCoordinator` → `MqttManager.startHeartbeat()` |
+| 命令分发 (ping/status/policy) | ✅ 已落地 | `MqttManager._handleBuiltIn()` |
+| set_policy / get_policy | ✅ 已落地 | → `_MqttFfiDelegate.applyPolicy()` → FFI 选项 + `serverModel.applyFamilyMqttPolicy()` |
+| set_config / get_config | ✅ 已落地 | → `_MqttFfiDelegate.applyConfig()`/`getConfig()` → `bind.mainSetOption`/`mainGetOptionSync`（`custom-rendezvous-server`/`relay-server`/`api-server`/`key`） |
+| 自动允许任何连接 | ✅ 已落地 | `familyAutoAllowAny` → `sendLoginResponse` 跳过确认 |
+| 自动允许被控 | ✅ 已落地 | `familyAutoAcceptIncoming` → 改 approve mode |
 
-监控端联调：订阅 `rd/v1/heartbeat` → 抄 `deviceId` → 往 `rd/v1/cmd` 发指令 → 听 `rd/v1/ack`。
+| ServiceWatchdog 保活 | ✅ 已落地 | `MainActivity.kt` → `SET_FAMILY_POLICY` MethodChannel |
+| MQTT 断开重连 | ✅ 已落地 | 指数退避重试（2s~120s） |
+| grant / revoke / list | ⬜ 待实现 | 名单落盘 + `is_family_mqtt_granted` |
+| get_update_info / open_download | ⬜ 规划 | 依赖 retained `rd/v1/sys/version` |
+
+### 已落地的集成接缝（双向同步基础）
+
+本地存储为唯一事实来源：
+
+- 「家庭监控」设置页（`flutter/lib/mobile/pages/settings_page.dart`）监听 `familyMonitorChanged` 通知，收到外部变更时实时刷新对应开关；不在该页面时本地存储已更新，回到前台也会同步最新值。
+- MQTT 连接层实现后，收到 `set_policy` 等指令应调用 `mainSetLocalBoolOptionAndNotify`（`flutter/lib/common.dart`）写入本地选项并触发上述刷新。
+- MQTT 连接参数按文档第 2 节内置，不在 UI 中暴露。
+
+监控端联调（待实现）：订阅 `rd/v1/up` → 抄 `deviceId` → 往 `rd/v1/cmd` 发指令 → 等 `rd/v1/up`（`type: ack`）。
+
+---
+
+## 14. 授权后不需要二次确认的功能
+
+一旦 `autoAcceptIncoming`（或 `autoAllowAny`）授权通过，session 建立后以下功能可直接使用，不需要对端再次确认：
+
+| 功能 | 说明 |
+|---|---|
+| 文件传输 | 同一 session 内自由读写文件 |
+| 查看摄像头 | 实时查看设备摄像头 |
+| 终端 | 远程命令行 |
+| 端口转发 | 网络隧道 |
+| 键鼠控制 | 远程输入 |
+| 剪贴板 | 共享剪贴板 |
+| 音频 | 远程音频 |
+| 会话录像 | 录屏 |
+| 自动录像 | 来连自动开始录像 |
+
+这些功能在 `set_policy` 协议中不再保留独立开关。控制权仅通过连接授权管理：允许连接 = 允许所有功能。
+
+**例外：** 语音通话（`autoAnswerVoiceCall`）在授权后仍需单独处理，因为语音是独立于 session 的 event，对端会弹「接听/拒绝」对话框。
 
