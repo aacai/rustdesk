@@ -1,4 +1,4 @@
-package com.carriez.flutter_hbb
+package com.carriez.flutter_hbbx
 
 import android.annotation.SuppressLint
 import android.app.PendingIntent
@@ -311,7 +311,9 @@ class FloatingWindowService : Service(), View.OnTouchListener {
              popupMenu.menu.add(0, idSyncClipboard, 0, translate("Update client clipboard"))
          }
          val idStopService = 2
-         val hideStopService = FFI.getBuildinOption("hide-stop-service") == "Y"
+         val hideStopService = FFI.getBuildinOption("hide-stop-service") == "Y" ||
+             FFI.getLocalOption("family-hide-stop-service") == "Y" ||
+             FamilyMqttPolicy.getPolicy(applicationContext).optBoolean("hideStopService", false)
          if (!hideStopService) {
              popupMenu.menu.add(0, idStopService, 0, translate("Stop service"))
          }

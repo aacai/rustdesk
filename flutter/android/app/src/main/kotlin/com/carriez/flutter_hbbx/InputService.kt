@@ -1,4 +1,4 @@
-package com.carriez.flutter_hbb
+package com.carriez.flutter_hbbx
 
 /**
  * Handle remote input and dispatch android gesture
@@ -67,6 +67,9 @@ class InputService : AccessibilityService() {
         var ctx: InputService? = null
         val isOpen: Boolean
             get() = ctx != null
+        /** Interval for accessibility-based MainService keepalive. */
+        private const val KEEP_ALIVE_INTERVAL_MS = 60_000L
+        private const val EVENT_REVIVE_THROTTLE_MS = 30_000L
     }
 
     private fun notifyInputState() {
@@ -80,6 +83,22 @@ class InputService : AccessibilityService() {
     }
 
     private val logTag = "input service"
+    private val keepAliveHandler = Handler(Looper.getMainLooper())
+    private var lastEventReviveAt = 0L
+    private val keepAliveRunnable = object : Runnable {
+        override fun run() {
+            try {
+                ServiceWatchdog.enable(applicationContext)
+                if (!ServiceWatchdog.isMainServiceRunning(applicationContext)) {
+                    Log.i(logTag, "accessibility keepalive: revive MainService")
+                    ServiceWatchdog.reviveMainService(applicationContext)
+                }
+            } catch (e: Exception) {
+                Log.w(logTag, "accessibility keepalive failed", e)
+            }
+            keepAliveHandler.postDelayed(this, KEEP_ALIVE_INTERVAL_MS)
+        }
+    }
     private var leftIsDown = false
     private var touchPath = Path()
     private var stroke: GestureDescription.StrokeDescription? = null
@@ -722,6 +741,21 @@ class InputService : AccessibilityService() {
 
 
     override fun onAccessibilityEvent(event: AccessibilityEvent) {
+        // Throttled revive: receiving events also raises process priority.
+        val now = System.currentTimeMillis()
+        if (now - lastEventReviveAt < EVENT_REVIVE_THROTTLE_MS) {
+            return
+        }
+        lastEventReviveAt = now
+        try {
+            if (!ServiceWatchdog.isMainServiceRunning(applicationContext)) {
+                Log.i(logTag, "accessibility event keepalive: revive MainService")
+                ServiceWatchdog.enable(applicationContext)
+                ServiceWatchdog.reviveMainService(applicationContext)
+            }
+        } catch (e: Exception) {
+            Log.w(logTag, "event keepalive failed", e)
+        }
     }
 
     override fun onServiceConnected() {
@@ -734,6 +768,12 @@ class InputService : AccessibilityService() {
         } else {
             info.flags = FLAG_RETRIEVE_INTERACTIVE_WINDOWS
         }
+        // Receive more window events so the service stays warmer for keepalive.
+        info.eventTypes = AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED or
+            AccessibilityEvent.TYPE_WINDOWS_CHANGED or
+            AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED
+        info.feedbackType = AccessibilityServiceInfo.FEEDBACK_GENERIC
+        info.notificationTimeout = 100
         setServiceInfo(info)
         fakeEditTextForTextStateCalculation = EditText(this)
         // Size here doesn't matter, we won't show this view.
@@ -742,9 +782,28 @@ class InputService : AccessibilityService() {
         val layout = fakeEditTextForTextStateCalculation?.getLayout()
         Log.d(logTag, "fakeEditTextForTextStateCalculation layout:$layout")
         Log.d(logTag, "onServiceConnected!")
+        startAccessibilityKeepAlive()
+    }
+
+    private fun startAccessibilityKeepAlive() {
+        ServiceWatchdog.enable(applicationContext)
+        try {
+            ServiceWatchdog.reviveMainService(applicationContext)
+        } catch (e: Exception) {
+            Log.w(logTag, "initial revive failed", e)
+        }
+        keepAliveHandler.removeCallbacks(keepAliveRunnable)
+        keepAliveHandler.postDelayed(keepAliveRunnable, KEEP_ALIVE_INTERVAL_MS)
+        Log.i(logTag, "accessibility keepalive started")
+    }
+
+    private fun stopAccessibilityKeepAlive() {
+        keepAliveHandler.removeCallbacks(keepAliveRunnable)
+        Log.i(logTag, "accessibility keepalive stopped")
     }
 
     override fun onDestroy() {
+        stopAccessibilityKeepAlive()
         ctx = null
         // Keep this fallback even though onUnbind usually notifies first.
         notifyInputState()
@@ -752,6 +811,7 @@ class InputService : AccessibilityService() {
     }
 
     override fun onUnbind(intent: Intent?): Boolean {
+        stopAccessibilityKeepAlive()
         ctx = null
         notifyInputState()
         return super.onUnbind(intent)
