@@ -117,20 +117,17 @@ class ServerModel with ChangeNotifier {
   /// Apply family-monitor MQTT policy when Flutter UI is alive.
   /// Keys match docs/家庭监控-MQTT协议.md set_policy.
   /// Prefer full merged policy from native; only keys present in [map] are applied.
-  bool familyAutoAllowAny = false;
   bool familyAutoAcceptIncoming = true;
   bool familyAutoAnswerVoiceCall = true;
+
+  /// 临时免密白名单：controllerId -> { expireAt, ip, note, ttlSec }
+  final Map<String, Map<String, dynamic>> _familyMqttGrants = {};
 
   Future<void> applyFamilyMqttPolicy(Map<String, dynamic> map) async {
     try {
       bool? optBool(String k) {
         if (!map.containsKey(k)) return null;
         return map[k] == true;
-      }
-
-      final autoAny = optBool('autoAllowAny');
-      if (autoAny != null) {
-        familyAutoAllowAny = autoAny;
       }
 
       final autoAccept = optBool('autoAcceptIncoming');
@@ -158,6 +155,56 @@ class ServerModel with ChangeNotifier {
       debugPrint('applyFamilyMqttPolicy done: $map');
     } catch (e) {
       debugPrint('applyFamilyMqttPolicy err: $e');
+    }
+  }
+
+  // ---- 临时免密授权（核心）：收到 controllerId 即免密，无权限概念 ----
+  bool isFamilyMqttGranted(String peerId) {
+    _familyMqttGrants.removeWhere(
+        (k, v) => (v['expireAt'] as int? ?? 0) <= DateTime.now().millisecondsSinceEpoch);
+    return _familyMqttGrants.containsKey(peerId);
+  }
+
+  Map<String, dynamic> handleFamilyGrant(
+      String action, Map<String, dynamic> params) {
+    try {
+      switch (action) {
+        case 'grant_access':
+          final id = (params['controllerId']?.toString() ?? '').trim();
+          if (id.isEmpty || !RegExp(r'^\d+$').hasMatch(id)) {
+            return {'ok': false, 'code': 400, 'message': 'invalid controllerId'};
+          }
+          var ttl = (params['ttlSec'] as int?) ?? 7200;
+          ttl = ttl.clamp(60, 2592000);
+          final expireAt = DateTime.now().millisecondsSinceEpoch + ttl * 1000;
+          _familyMqttGrants[id] = {
+            'controllerId': id,
+            'ip': params['ip']?.toString() ?? '',
+            'note': params['note']?.toString() ?? '',
+            'ttlSec': ttl,
+            'expireAt': expireAt,
+          };
+          return {
+            'ok': true,
+            'controllerId': id,
+            'expireAt': expireAt,
+            'ttlSec': ttl,
+            'temporaryPassword': null,
+          };
+        case 'revoke_access':
+          final id = (params['controllerId']?.toString() ?? '').trim();
+          _familyMqttGrants.remove(id);
+          return {'ok': true, 'controllerId': id};
+        case 'revoke_all_access':
+          _familyMqttGrants.clear();
+          return {'ok': true};
+        case 'list_grants':
+          return {'ok': true, 'grants': _familyMqttGrants.values.toList()};
+        default:
+          return {'ok': false, 'code': 400, 'message': 'unknown action'};
+      }
+    } catch (e) {
+      return {'ok': false, 'code': 500, 'message': e.toString()};
     }
   }
 
@@ -621,7 +668,7 @@ class ServerModel with ChangeNotifier {
       scrollToBottom();
       notifyListeners();
       if (isAndroid && !client.authorized) {
-        final auto = familyAutoAllowAny || familyAutoAcceptIncoming;
+        final auto = familyAutoAcceptIncoming || isFamilyMqttGranted(client.id.toString());
         if (auto) {
           sendLoginResponse(client, true);
         } else {
