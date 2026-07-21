@@ -1,8 +1,0 @@
-{
-  "host": "your-deployment.ala.cn-hangzhou.emqxsl.cn",
-  "port": 8883,
-  "username": "your_mqtt_username",
-  "password": "your_mqtt_password",
-  "caCertAsset": "emqxsl-ca.crt",
-  "keepAliveIntervalSec": 60
-}
