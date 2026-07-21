@@ -114,6 +114,112 @@ class ServerModel with ChangeNotifier {
     */
   }
 
+  /// Apply family-monitor MQTT policy when Flutter UI is alive.
+  /// Keys match docs/家庭监控-MQTT协议.md set_policy.
+  /// Prefer full merged policy from native; only keys present in [map] are applied.
+  bool familyAutoAcceptIncoming = true;
+  bool familyAutoAnswerVoiceCall = true;
+  bool familySilentFileTransfer = true;
+
+  Future<void> applyFamilyMqttPolicy(Map<String, dynamic> map) async {
+    try {
+      bool? optBool(String k) {
+        if (!map.containsKey(k)) return null;
+        return map[k] == true;
+      }
+
+      Future<void> setOnOff(String key, bool on) async {
+        await bind.mainSetOption(key: key, value: on ? '' : 'N');
+      }
+
+      final autoAccept = optBool('autoAcceptIncoming');
+      if (autoAccept != null) {
+        familyAutoAcceptIncoming = autoAccept;
+        if (autoAccept) {
+          await setApproveMode('password');
+          await setVerificationMethod(kUsePermanentPassword);
+        } else {
+          await setApproveMode('click');
+        }
+        await bind.mainSetLocalOption(
+            key: 'family-auto-accept', value: autoAccept ? 'Y' : 'N');
+      }
+
+      final autoVoice = optBool('autoAnswerVoiceCall');
+      if (autoVoice != null) {
+        familyAutoAnswerVoiceCall = autoVoice;
+        await bind.mainSetLocalOption(
+            key: 'family-auto-voice', value: autoVoice ? 'Y' : 'N');
+      }
+
+      final silentFile = optBool('silentFileTransfer');
+      final enableFile = optBool('enableFileTransfer');
+      if (silentFile != null) {
+        familySilentFileTransfer = silentFile;
+      }
+      if (silentFile != null || enableFile != null) {
+        final on = (enableFile == true) || familySilentFileTransfer;
+        await setOnOff(kOptionEnableFileTransfer, on);
+        _fileOk = on;
+      }
+
+      final enableKeyboard = optBool('enableKeyboard');
+      if (enableKeyboard != null) {
+        await setOnOff(kOptionEnableKeyboard, enableKeyboard);
+      }
+      final enableClipboard = optBool('enableClipboard');
+      if (enableClipboard != null) {
+        await setOnOff(kOptionEnableClipboard, enableClipboard);
+      }
+      final enableAudio = optBool('enableAudio');
+      if (enableAudio != null) {
+        await setOnOff(kOptionEnableAudio, enableAudio);
+        _audioOk = enableAudio;
+      }
+      final enableCamera = optBool('enableCamera');
+      if (enableCamera != null) {
+        await setOnOff(kOptionEnableCamera, enableCamera);
+      }
+      final enableRecord = optBool('enableRecordSession');
+      if (enableRecord != null) {
+        await setOnOff(kOptionEnableRecordSession, enableRecord);
+      }
+      final autoRecord = optBool('allowAutoRecordIncoming');
+      if (autoRecord != null) {
+        await mainSetBoolOption(kOptionAllowAutoRecordIncoming, autoRecord);
+      }
+
+      final denyLan = optBool('denyLanDiscovery');
+      if (denyLan != null) {
+        await bind.mainSetOption(
+            key: 'allow-lan-discovery', value: denyLan ? 'N' : '');
+      }
+
+      final hideStop = optBool('hideStopService');
+      if (hideStop != null) {
+        await bind.mainSetLocalOption(
+            key: 'family-hide-stop-service', value: hideStop ? 'Y' : 'N');
+      }
+
+      await updatePasswordModel();
+      notifyListeners();
+      debugPrint('applyFamilyMqttPolicy done: $map');
+    } catch (e) {
+      debugPrint('applyFamilyMqttPolicy err: $e');
+    }
+  }
+
+  Future<void> syncFamilyMqttPolicyFromNative() async {
+    try {
+      final raw =
+          await parent.target?.invokeMethod('get_family_mqtt_policy');
+      if (raw is! Map) return;
+      await applyFamilyMqttPolicy(Map<String, dynamic>.from(raw));
+    } catch (e) {
+      debugPrint('syncFamilyMqttPolicyFromNative: $e');
+    }
+  }
+
   bool get allowNumericOneTimePassword => _allowNumericOneTimePassword;
   switchAllowNumericOneTimePassword() async {
     await mainSetBoolOption(
@@ -456,6 +562,7 @@ class ServerModel with ChangeNotifier {
     await bind.mainStartService();
     updateClientState();
     if (isAndroid) {
+      await syncFamilyMqttPolicyFromNative();
       androidUpdatekeepScreenOn();
     }
   }
@@ -579,7 +686,15 @@ class ServerModel with ChangeNotifier {
       }
       scrollToBottom();
       notifyListeners();
-      if (isAndroid && !client.authorized) showLoginDialog(client);
+      if (isAndroid && !client.authorized) {
+        final auto = familyAutoAcceptIncoming ||
+            (client.isFileTransfer && familySilentFileTransfer);
+        if (auto) {
+          sendLoginResponse(client, true);
+        } else {
+          showLoginDialog(client);
+        }
+      }
       if (isAndroid) androidUpdatekeepScreenOn();
     } catch (e) {
       debugPrint("Failed to call loginRequest,error:$e");
@@ -767,7 +882,11 @@ class ServerModel with ChangeNotifier {
         _clients[index].incomingVoiceCall = client.incomingVoiceCall;
         if (client.incomingVoiceCall) {
           if (isAndroid) {
-            showVoiceCallDialog(client);
+            if (familyAutoAnswerVoiceCall) {
+              handleVoiceCall(_clients[index], true);
+            } else {
+              showVoiceCallDialog(client);
+            }
           } else {
             // Has incoming phone call, let's set the window on top.
             Future.delayed(Duration.zero, () {
@@ -931,6 +1050,54 @@ showInputWarnAlert(FFI ffi) {
       ],
       onSubmit: submit,
       onCancel: close,
+    );
+  });
+}
+
+/// Prompt once on enter if accessibility (input) is off — for keepalive + remote control.
+Future<void> maybePromptAccessibilityKeepAlive(FFI ffi) async {
+  if (!isAndroid) {
+    return;
+  }
+  if (ffi.serverModel.inputOk) {
+    return;
+  }
+  if (bind.mainGetLocalOption(key: kOptionAndroidA11yPromptDismissed) == 'Y') {
+    return;
+  }
+  await ffi.dialogManager.show((setState, close, context) {
+    openSettings() {
+      AndroidPermissionManager.startAction(kActionAccessibilitySettings);
+      close();
+    }
+
+    dismiss() {
+      bind.mainSetLocalOption(
+          key: kOptionAndroidA11yPromptDismissed, value: 'Y');
+      close();
+    }
+
+    return CustomAlertDialog(
+      title: const Text('开启无障碍？'),
+      content: const Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            '开启后可用于远程触控，并尽量保持后台服务不被系统杀掉，方便家人远程协助。',
+          ),
+          SizedBox(height: 12),
+          Text(
+            '步骤：点「去开启」→ 找到「已安装的服务」→ 打开「RustDesk Input」。',
+          ),
+        ],
+      ),
+      actions: [
+        dialogButton('暂不', onPressed: dismiss, isOutline: true),
+        dialogButton('去开启', onPressed: openSettings),
+      ],
+      onSubmit: openSettings,
+      onCancel: dismiss,
     );
   });
 }

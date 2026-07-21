@@ -3145,6 +3145,53 @@ pub mod server_side {
     }
 
     #[no_mangle]
+    pub unsafe extern "system" fn Java_ffi_FFI_getOption(
+        env: JNIEnv,
+        _class: JClass,
+        key: JString,
+    ) -> jstring {
+        let mut env = env;
+        let res = if let Ok(key) = env.get_string(&key) {
+            let key: String = key.into();
+            super::get_option(key)
+        } else {
+            "".into()
+        };
+        return env.new_string(res).unwrap_or_default().into_raw();
+    }
+
+    #[no_mangle]
+    pub unsafe extern "system" fn Java_ffi_FFI_setOption(
+        env: JNIEnv,
+        _class: JClass,
+        key: JString,
+        value: JString,
+    ) {
+        let mut env = env;
+        if let (Ok(key), Ok(value)) = (env.get_string(&key), env.get_string(&value)) {
+            let key: String = key.into();
+            let value: String = value.into();
+            // Same path as Flutter mainSetOption (restarts rendezvous when needed).
+            super::main_set_option(key, value);
+        }
+    }
+
+    #[no_mangle]
+    pub unsafe extern "system" fn Java_ffi_FFI_setLocalOption(
+        env: JNIEnv,
+        _class: JClass,
+        key: JString,
+        value: JString,
+    ) {
+        let mut env = env;
+        if let (Ok(key), Ok(value)) = (env.get_string(&key), env.get_string(&value)) {
+            let key: String = key.into();
+            let value: String = value.into();
+            super::main_set_local_option(key, value);
+        }
+    }
+
+    #[no_mangle]
     pub unsafe extern "system" fn Java_ffi_FFI_getBuildinOption(
         env: JNIEnv,
         _class: JClass,

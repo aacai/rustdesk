@@ -211,6 +211,9 @@ const String kOptionDisableFloatingWindow = "disable-floating-window";
 
 const String kOptionKeepScreenOn = "keep-screen-on";
 
+/// Once user taps "暂不" on the accessibility keepalive prompt.
+const String kOptionAndroidA11yPromptDismissed = "android-a11y-prompt-dismissed";
+
 const String kOptionKeepAwakeDuringIncomingSessions = "keep-awake-during-incoming-sessions";
 const String kOptionKeepAwakeDuringOutgoingSessions = "keep-awake-during-outgoing-sessions";
 

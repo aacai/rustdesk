@@ -1,4 +1,4 @@
-package com.carriez.flutter_hbb
+package com.carriez.flutter_hbbx
 
 import android.app.Application
 import android.util.Log
@@ -13,5 +13,6 @@ class MainApplication : Application() {
         super.onCreate()
         Log.d(TAG, "App start")
         FFI.onAppStart(applicationContext)
+        MqttCommandService.start(applicationContext)
     }
 }

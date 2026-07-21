@@ -1528,11 +1528,12 @@ class AndroidPermissionManager {
     return false;
   }
 
-  static Future<bool> check(String type) {
+  static Future<bool> check(String type) async {
     if (isDesktop || isWeb) {
-      return Future.value(true);
+      return true;
     }
-    return gFFI.invokeMethod("check_permission", type);
+    final r = await gFFI.invokeMethod("check_permission", type);
+    return r == true;
   }
 
   // startActivity goto Android Setting's page to request permission manually by user

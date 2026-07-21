@@ -55,4 +55,3 @@ examples/**/target/
 vcpkg_installed
 flutter/lib/generated_plugin_registrant.dart
 libsciter.dylib
-flutter/web/

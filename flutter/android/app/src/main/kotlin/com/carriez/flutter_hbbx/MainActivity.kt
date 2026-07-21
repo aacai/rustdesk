@@ -1,4 +1,4 @@
-package com.carriez.flutter_hbb
+package com.carriez.flutter_hbbx
 
 /**
  * Handle events from flutter
@@ -273,6 +273,17 @@ class MainActivity : FlutterActivity() {
                 }
                 "on_voice_call_closed" -> {
                     onVoiceCallClosed()
+                }
+                "get_family_mqtt_policy" -> {
+                    val policy = FamilyMqttPolicy.getPolicy(context)
+                    val out = HashMap<String, Any?>()
+                    val keys = policy.keys()
+                    while (keys.hasNext()) {
+                        val k = keys.next()
+                        val v = policy.get(k)
+                        out[k] = if (v === org.json.JSONObject.NULL) null else v
+                    }
+                    result.success(out)
                 }
                 else -> {
                     result.error("-1", "No such method", null)
