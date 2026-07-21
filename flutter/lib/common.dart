@@ -1519,11 +1519,19 @@ class AndroidPermissionManager {
   static Timer? _timer;
   static var _current = "";
 
-  static Future<bool> check(String type) {
-    if (isDesktop || isWeb) {
-      return Future.value(true);
+  static bool isWaitingFile() {
+    if (_completer != null) {
+      return !_completer!.isCompleted && _current == kManageExternalStorage;
     }
-    return gFFI.invokeMethod("check_permission", type);
+    return false;
+  }
+
+  static Future<bool> check(String type) async {
+    if (isDesktop || isWeb) {
+      return true;
+    }
+    final r = await gFFI.invokeMethod("check_permission", type);
+    return r == true;
   }
 
   // startActivity goto Android Setting's page to request permission manually by user

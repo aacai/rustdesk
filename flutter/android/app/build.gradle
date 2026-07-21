@@ -82,7 +82,7 @@ protobuf {
 }
 
 android {
-    namespace "com.carriez.flutter_hbb"
+    namespace "com.carriez.flutter_hbbx"
     compileSdkVersion 36
     sourceSets {
         main.java.srcDirs += 'src/main/kotlin'
@@ -99,7 +99,7 @@ android {
 
     defaultConfig {
         // TODO: Specify your own unique Application ID (https://developer.android.com/studio/build/application-id.html).
-        applicationId "com.carriez.flutter_hbb"
+        applicationId "com.carriez.flutter_hbbx"
         minSdkVersion 22
         targetSdkVersion 36
         versionCode flutterVersionCode.toInteger()
@@ -137,4 +137,5 @@ dependencies {
     implementation("org.jetbrains.kotlin:kotlin-stdlib") { version { strictly("1.9.10") } }
     implementation 'com.caverock:androidsvg-aar:1.4'
     implementation "rustls:rustls-platform-verifier:0.1.1"
+    implementation 'org.eclipse.paho:org.eclipse.paho.client.mqttv3:1.2.5'
 }

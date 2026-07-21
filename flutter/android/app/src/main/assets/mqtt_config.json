@@ -1,0 +1,8 @@
+{
+  "host": "s5ebe39b.ala.cn-hangzhou.emqxsl.cn",
+  "port": 8883,
+  "username": "i2aea494",
+  "password": "QzCV-8jJK5aR6gfY",
+  "caCertAsset": "emqxsl-ca.crt",
+  "keepAliveIntervalSec": 60
+}
