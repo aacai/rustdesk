@@ -4178,7 +4178,7 @@ class FFI {
     platformFFI.setMethodCallHandler(callback);
   }
 
-  Future<bool> invokeMethod(String method, [dynamic arguments]) async {
+  Future<dynamic> invokeMethod(String method, [dynamic arguments]) async {
     return await platformFFI.invokeMethod(method, arguments);
   }
 

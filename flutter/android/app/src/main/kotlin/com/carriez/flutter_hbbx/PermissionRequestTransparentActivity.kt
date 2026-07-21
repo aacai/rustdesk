@@ -1,4 +1,4 @@
-package com.carriez.flutter_hbb
+package com.carriez.flutter_hbbx
 
 import android.app.Activity
 import android.content.Intent
