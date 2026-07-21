@@ -2,15 +2,22 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
-
 import 'package:flutter_hbb/common.dart';
 import 'package:flutter_hbb/models/platform_model.dart';
+import 'package:meta/meta.dart';
 import 'package:mqtt_client/mqtt_client.dart';
-import 'package:mqtt_client/mqtt_server_client.dart';
 
 import '../consts.dart';
 import 'mqtt_manager.dart';
+
+// Broker config shared by device-side manager and monitor-side controller so
+// integration tests exercise the exact same parameters as production.
+const String _kMqttHost = 's5ebe39b.ala.cn-hangzhou.emqxsl.cn';
+const int _kMqttPort = 8084;
+const String _kMqttUser = 'xiangqi_player';
+const String _kMqttPass = 'xiangqi2024';
 
 /// Coordinates MQTT connection with FFI options and native Android features.
 ///
@@ -24,7 +31,10 @@ class MqttCoordinator {
 
   MqttManager? _manager;
   bool _started = false;
+  bool _starting = false;
   String _deviceId = '';
+  /// The device id used for MQTT client/topic identity (never empty once started).
+  String get deviceId => _deviceId;
 
   final _connectionController = StreamController<bool>.broadcast();
 
@@ -33,19 +43,28 @@ class MqttCoordinator {
 
   bool get isConnected => _manager?.isConnected ?? false;
 
-  // Controller (monitor / control side).
-  _MqttController? _controller;
-
-  bool get controllerConnected => _controller?.isConnected ?? false;
-  Stream<bool> get onControllerConnection =>
-      _controller?._connController.stream ?? const Stream.empty();
+  bool get controllerConnected => _manager?.isConnected ?? false;
+  Stream<bool> get onControllerConnection => _connectionController.stream;
   Stream<Map<String, dynamic>> get onControllerUpMessage =>
-      _controller?._msgController.stream ?? const Stream.empty();
+      _manager?.onUpMessage ?? const Stream.empty();
+
+  /// 在线设备列表，由 `rd/v1/up` 心跳 / 事件维护（内存态，90s 无更新即过期）。
+  /// 单例常驻，任何页面 / 无页面打开时都可读、可监听。
+  final Map<String, Map<String, dynamic>> _devices = {};
+  final StreamController<void> _devicesChanged =
+      StreamController<void>.broadcast();
+  List<Map<String, dynamic>> get devices {
+    final now = DateTime.now().millisecondsSinceEpoch;
+    _devices.removeWhere((_, v) => (v['lastSeen'] as int? ?? 0) < now - 90000);
+    return _devices.values.toList();
+  }
+
+  Stream<void> get onDevicesChanged => _devicesChanged.stream;
 
   /// Publish a command envelope to the command topic from the control side.
   void publishCmd(
       String deviceId, String action, Map<String, dynamic> params) {
-    _controller?.publishCmd({
+    _manager?.publishCmd({
       'v': 1,
       'requestId':
           'c-${DateTime.now().millisecondsSinceEpoch}-${DateTime.now().microsecond}',
@@ -58,10 +77,14 @@ class MqttCoordinator {
   }
 
   /// Publish a check-update request (get_update_info) to the command topic.
-  /// Sends once on call; no-op when MQTT is not connected.
-  void sendCheckUpdate() {
+  /// Sends once on call. Returns `true` if the command was published (MQTT connected),
+  /// `false` when MQTT is not connected so the caller can surface feedback.
+  bool sendCheckUpdate() {
     final mgr = _manager;
-    if (mgr == null || !mgr.isConnected) return;
+    if (mgr == null || !mgr.isConnected) {
+      debugPrint('[MqttCoordinator] sendCheckUpdate skipped: not connected');
+      return false;
+    }
     mgr.publish(
       kTopicCmd,
       jsonEncode({
@@ -74,13 +97,22 @@ class MqttCoordinator {
       }),
       MqttQos.atLeastOnce,
     );
+    debugPrint('[MqttCoordinator] sendCheckUpdate published to $kTopicCmd');
+    return true;
   }
 
   // ---------------------------------------- start / stop
 
   Future<void> start() async {
     if (_started) return;
-    _deviceId = bind.mainGetLocalOption(key: 'id');
+    _started = true;
+    try {
+      _deviceId = await bind.mainGetMyId();
+    } catch (e) {
+      debugPrint('[MqttCoordinator] mainGetMyId failed: $e');
+      _deviceId = '';
+    }
+    debugPrint('[MqttCoordinator] start() deviceId="$_deviceId"');
     if (_deviceId.isEmpty) {
       _scheduleRetryId();
       return;
@@ -94,14 +126,17 @@ class MqttCoordinator {
     _retryTimer?.cancel();
     _manager?.disconnect();
     _manager = null;
-    _controller?.disconnect();
-    _controller = null;
   }
 
   /// Called when RustDesk ID becomes available later (e.g. after service start).
-  void retry() {
+  Future<void> retry() async {
     if (_started) return;
-    _deviceId = bind.mainGetLocalOption(key: 'id');
+    try {
+      _deviceId = await bind.mainGetMyId();
+    } catch (e) {
+      debugPrint('[MqttCoordinator] mainGetMyId (retry) failed: $e');
+      return;
+    }
     if (_deviceId.isNotEmpty) {
       _retryTimer?.cancel();
       _doStart();
@@ -114,8 +149,14 @@ class MqttCoordinator {
 
   void _scheduleRetryId() {
     _retryTimer?.cancel();
-    _retryTimer = Timer(const Duration(seconds: 5), () {
-      _deviceId = bind.mainGetLocalOption(key: 'id');
+    _retryTimer = Timer(const Duration(seconds: 5), () async {
+      try {
+        _deviceId = await bind.mainGetMyId();
+      } catch (e) {
+        debugPrint('[MqttCoordinator] mainGetMyId (retry) failed: $e');
+        _scheduleRetryId();
+        return;
+      }
       if (_deviceId.isEmpty) {
         _scheduleRetryId();
         return;
@@ -124,18 +165,56 @@ class MqttCoordinator {
     });
   }
 
+  /// Load the EMQX CA cert. Prefer bundled asset; fall back to a file on disk
+  /// so a transient asset-load failure (e.g. before the Flutter asset system is
+  /// fully ready) does not silently leave MQTT permanently disconnected.
+  Future<String> _loadCaPem() async {
+    try {
+      final pem = await rootBundle.loadString('assets/emqxsl-ca.crt');
+      if (pem.isNotEmpty) {
+        debugPrint('[MqttCoordinator] CA loaded from asset (${pem.length} bytes)');
+        return pem;
+      }
+    } catch (e) {
+      debugPrint('[MqttCoordinator] CA asset load failed: $e');
+    }
+    // Fallback: common on-device locations.
+    final candidates = [
+      'assets/emqxsl-ca.crt',
+      'emqxsl-ca.crt',
+    ];
+    for (final p in candidates) {
+      try {
+        final file = File(p);
+        if (await file.exists()) {
+          final pem = await file.readAsString();
+          if (pem.isNotEmpty) {
+            debugPrint('[MqttCoordinator] CA loaded from file ($p, ${pem.length} bytes)');
+            return pem;
+          }
+        }
+      } catch (e) {
+        debugPrint('[MqttCoordinator] CA file load failed ($p): $e');
+      }
+    }
+    throw StateError('EMQX CA certificate not found (asset or file)');
+  }
+
   void _doStart() {
+    if (_starting || _manager != null) return;
+    _starting = true;
     _started = true;
 
-    final caPem = rootBundle.loadString('assets/emqxsl-ca.crt');
+    final caPem = _loadCaPem();
     final clientId = 'rd-dev-$_deviceId';
 
-    final host = 's5ebe39b.ala.cn-hangzhou.emqxsl.cn';
-    const port = 8883;
-    const username = 'd91a4b87';
-    const password = 'E-PBKk3Bw_pU88zN';
+    const host = _kMqttHost;
+    const port = _kMqttPort; // wss listener (path /mqtt), per TS reference client
+    const username = _kMqttUser;
+    const password = _kMqttPass;
 
     caPem.then((pem) {
+      debugPrint('[MqttCoordinator] CA loaded (${pem.length} bytes), creating manager');
       _applyConnectionDefaults();
       _manager = MqttManager(
         host: host,
@@ -153,24 +232,13 @@ class MqttCoordinator {
       _manager!.onConnectionChanged.listen((c) => _connectionController.add(c));
       _connectionController.add(_manager!.isConnected);
       _manager!.connect();
+      _manager!.onUpMessage.listen(_onUpMessage);
 
-      _startController(pem, host, port, username, password);
+      _starting = false;
+    }).catchError((e) {
+      _starting = false;
+      debugPrint('[MqttCoordinator] CA load failed: $e');
     });
-  }
-
-  void _startController(String pem, String host, int port, String username,
-      String password) {
-    if (_controller != null) return;
-    final clientId = 'rd-ctl-$_deviceId-${DateTime.now().millisecondsSinceEpoch % 100000}';
-    _controller = _MqttController(
-      host: host,
-      port: port,
-      username: username,
-      password: password,
-      caCertPem: pem,
-      clientId: clientId,
-    );
-    _controller!.connect();
   }
 
   /// Apply default connection-optimization settings for family-monitor usage.
@@ -199,12 +267,43 @@ class MqttCoordinator {
     final policy = {
       'watchdogEnabled': mainGetLocalBoolOptionSync(kOptionMqttWatchdog),
       'heartbeatEnabled': mainGetLocalBoolOptionSync(kOptionMqttHeartbeat),
-      'autoAllowAny': mainGetLocalBoolOptionSync(kOptionMqttAutoAllowAny),
       'autoAcceptIncoming': mainGetLocalBoolOptionSync(kOptionMqttAutoAccept),
       'autoAnswerVoiceCall': mainGetLocalBoolOptionSync(kOptionMqttAutoAnswerVoice),
     };
     gFFI.invokeMethod(AndroidChannel.kSetFamilyPolicy, jsonEncode(policy));
     gFFI.serverModel.applyFamilyMqttPolicy(policy);
+  }
+
+  /// Test-only: start the single MQTT connection with an injected deviceId
+  /// and CA, bypassing the FFI-dependent startup.
+  @visibleForTesting
+  void startForTest(String deviceId, String caPem) {
+    _deviceId = deviceId;
+    _started = true;
+    _starting = false;
+
+    final clientId = 'rd-dev-$_deviceId';
+    _manager = MqttManager(
+      host: _kMqttHost,
+      port: _kMqttPort,
+      username: _kMqttUser,
+      password: _kMqttPass,
+      caCertPem: caPem,
+      clientId: clientId,
+    );
+    _manager!.onConnectionChanged.listen((c) => _connectionController.add(c));
+    _connectionController.add(_manager!.isConnected);
+    _manager!.connect();
+    _manager!.onUpMessage.listen(_onUpMessage);
+  }
+
+  /// 单例内部始终消费上行消息：按 deviceId 维护在线设备快照。
+  void _onUpMessage(Map<String, dynamic> msg) {
+    final id = msg['deviceId']?.toString();
+    if (id == null || id.isEmpty) return;
+    final now = DateTime.now().millisecondsSinceEpoch;
+    _devices[id] = {...msg, 'lastSeen': now};
+    _devicesChanged.add(null);
   }
 }
 
@@ -215,7 +314,7 @@ class _MqttFfiDelegate extends MqttDelegate {
   @override
   String? buildHeartbeatPayload() {
     if (!mainGetLocalBoolOptionSync(kOptionMqttHeartbeat)) return null;
-    final id = bind.mainGetLocalOption(key: 'id');
+    final id = MqttCoordinator.instance.deviceId;
     if (id.isEmpty) return null;
     return jsonEncode({
       'v': 1,
@@ -227,19 +326,21 @@ class _MqttFfiDelegate extends MqttDelegate {
   }
 
   @override
-  @override
   Map<String, dynamic> buildPolicy() => {
         'heartbeatEnabled': mainGetLocalBoolOptionSync(kOptionMqttHeartbeat),
-        'autoAllowAny': mainGetLocalBoolOptionSync(kOptionMqttAutoAllowAny),
         'autoAcceptIncoming': mainGetLocalBoolOptionSync(kOptionMqttAutoAccept),
         'autoAnswerVoiceCall': mainGetLocalBoolOptionSync(kOptionMqttAutoAnswerVoice),
       };
 
   @override
+  Map<String, dynamic> handleGrant(String action, Map<String, dynamic> params) {
+    return gFFI.serverModel.handleFamilyGrant(action, params);
+  }
+
+  @override
   void applyPolicy(Map<String, dynamic> params) {
     final map = {
       kOptionMqttHeartbeat: params['heartbeatEnabled'],
-      kOptionMqttAutoAllowAny: params['autoAllowAny'],
       kOptionMqttAutoAccept: params['autoAcceptIncoming'],
       kOptionMqttAutoAnswerVoice: params['autoAnswerVoiceCall'],
     };
@@ -310,7 +411,7 @@ class _MqttFfiDelegate extends MqttDelegate {
 
   @override
   Map<String, dynamic> buildStatus() => {
-        'deviceId': bind.mainGetLocalOption(key: 'id'),
+        'deviceId': MqttCoordinator.instance.deviceId,
         'mqttConnected': true,
         'heartbeatEnabled': mainGetLocalBoolOptionSync(kOptionMqttHeartbeat),
         'appVersion': '1.4.9',
@@ -320,129 +421,4 @@ class _MqttFfiDelegate extends MqttDelegate {
   String get appVersion => '1.4.9';
 }
 
-/// Lightweight MQTT client on the monitor/control side.
-///
-/// Subscribes to [kTopicUp] (and [kTopicSysVersion]) to receive device
-/// heartbeats and command acks, and publishes command envelopes to
-/// [kTopicCmd]. It does not run the device heartbeat/policy loop.
-class _MqttController {
-  _MqttController({
-    required this.host,
-    required this.port,
-    required this.username,
-    required this.password,
-    required this.caCertPem,
-    required this.clientId,
-  });
 
-  final String host;
-  final int port;
-  final String username;
-  final String password;
-  final String caCertPem;
-  final String clientId;
-
-  MqttServerClient? _client;
-  bool _stopping = false;
-  Timer? _retryTimer;
-  int _retryAttempt = 0;
-
-  final _msgController = StreamController<Map<String, dynamic>>.broadcast();
-  final _connController = StreamController<bool>.broadcast();
-
-  Stream<Map<String, dynamic>> get onUpMessage => _msgController.stream;
-  Stream<bool> get onConnectionChanged => _connController.stream;
-
-  bool get isConnected =>
-      _client?.connectionStatus?.state == MqttConnectionState.connected;
-
-  void connect() {
-    if (_stopping) return;
-    _connectOnce().catchError((e) {
-      if (!_stopping) _scheduleReconnect('connect: $e');
-    });
-  }
-
-  int _backoff() {
-    final exp = 1 << (_retryAttempt.clamp(0, 31));
-    return (3 * exp).clamp(2, 120);
-  }
-
-  void _scheduleReconnect(String reason) {
-    if (_stopping) return;
-    _retryAttempt++;
-    _retryTimer?.cancel();
-    _retryTimer = Timer(Duration(seconds: _backoff()), connect);
-  }
-
-  Future<void> _connectOnce() async {
-    final client = MqttServerClient(host, clientId);
-    client.port = port;
-    client.keepAlivePeriod = 60;
-    client.autoReconnect = false;
-    client.secure = true;
-    client.onConnected = _onConnected;
-    client.onDisconnected = _onDisconnected;
-    final context = SecurityContext(withTrustedRoots: true)
-      ..setTrustedCertificatesBytes(utf8.encode(caCertPem));
-    client.securityContext = context;
-    client.connectionMessage = MqttConnectMessage()
-      ..withClientIdentifier(clientId)
-      ..authenticateAs(username, password)
-      ..startClean();
-    _client = client;
-    await client.connect();
-    if (client.connectionStatus?.state != MqttConnectionState.connected) {
-      throw Exception('mqtt connect state=${client.connectionStatus?.state}');
-    }
-  }
-
-  void _onConnected() {
-    _retryAttempt = 0;
-    _connController.add(true);
-    _client!.subscribe(kTopicUp, MqttQos.atLeastOnce);
-    _client!.subscribe(kTopicSysVersion, MqttQos.atLeastOnce);
-    _client!.updates!.listen(_onRawMessage);
-  }
-
-  void _onDisconnected() {
-    _connController.add(false);
-    if (!_stopping) _scheduleReconnect('disconnected');
-  }
-
-  void _onRawMessage(List<MqttReceivedMessage<MqttMessage>> msgs) {
-    for (final msg in msgs) {
-      final recv = msg.payload as MqttPublishMessage;
-      final raw =
-          MqttPublishPayload.bytesToStringAsString(recv.payload.message);
-      try {
-        final json = jsonDecode(raw) as Map<String, dynamic>;
-        _msgController.add({'topic': msg.topic, ...json});
-      } catch (_) {
-        // ignore non-JSON payloads
-      }
-    }
-  }
-
-  void publishCmd(Map<String, dynamic> payload) {
-    if (!isConnected) return;
-    try {
-      _client!.publishMessage(
-        kTopicCmd,
-        MqttQos.atLeastOnce,
-        MqttClientPayloadBuilder().addString(jsonEncode(payload)).payload!,
-      );
-    } catch (e) {
-      print('[MqttController] publish: $e');
-    }
-  }
-
-  void disconnect() {
-    _stopping = true;
-    _retryTimer?.cancel();
-    try {
-      _client?.disconnect();
-    } catch (_) {}
-    _client = null;
-  }
-}

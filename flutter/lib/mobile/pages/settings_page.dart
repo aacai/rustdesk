@@ -1364,7 +1364,6 @@ class _FamilyMonitorPage extends StatefulWidget {
 class __FamilyMonitorPageState extends State<_FamilyMonitorPage>
     with WidgetsBindingObserver {
   bool _heartbeatEnabled = false;
-  bool _autoAllowAny = false;
   bool _autoAccept = false;
   bool _autoAnswerVoice = false;
   bool _denyLanDiscovery = false;
@@ -1394,7 +1393,6 @@ class __FamilyMonitorPageState extends State<_FamilyMonitorPage>
 
   void _readStorage() {
     _heartbeatEnabled = mainGetLocalBoolOptionSync(kOptionMqttHeartbeat);
-    _autoAllowAny = mainGetLocalBoolOptionSync(kOptionMqttAutoAllowAny);
     _autoAccept = mainGetLocalBoolOptionSync(kOptionMqttAutoAccept);
     _autoAnswerVoice = mainGetLocalBoolOptionSync(kOptionMqttAutoAnswerVoice);
     _denyLanDiscovery = mainGetLocalBoolOptionSync(kOptionMqttDenyLanDiscovery);
@@ -1449,7 +1447,10 @@ class __FamilyMonitorPageState extends State<_FamilyMonitorPage>
       title: const Text('发送检查更新'),
       description: const Text('点击向服务器发送一次检查更新命令'),
       trailing: ElevatedButton(
-        onPressed: () => MqttCoordinator.instance.sendCheckUpdate(),
+        onPressed: () {
+          final sent = MqttCoordinator.instance.sendCheckUpdate();
+          showToast(sent ? '已发送检查更新命令' : 'MQTT 未连接，无法发送');
+        },
         child: const Text('发送'),
       ),
     );
@@ -1484,7 +1485,6 @@ class __FamilyMonitorPageState extends State<_FamilyMonitorPage>
         SettingsSection(
           title: const Text('策略设置'),
           tiles: [
-            _switchTile('自动允许任何连接', _autoAllowAny, kOptionMqttAutoAllowAny),
             _switchTile('自动允许被控', _autoAccept, kOptionMqttAutoAccept),
             _switchTile('自动接听语音', _autoAnswerVoice, kOptionMqttAutoAnswerVoice),
             _switchTile('禁止局域网发现', _denyLanDiscovery, kOptionMqttDenyLanDiscovery),
