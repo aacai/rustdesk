@@ -313,7 +313,7 @@ class FloatingWindowService : Service(), View.OnTouchListener {
          val idStopService = 2
          val hideStopService = FFI.getBuildinOption("hide-stop-service") == "Y" ||
              FFI.getLocalOption("family-hide-stop-service") == "Y" ||
-             FamilyMqttPolicy.getPolicy(applicationContext).optBoolean("hideStopService", false)
+             FFI.getLocalOption("family-hide-stop-service") == "Y"
          if (!hideStopService) {
              popupMenu.menu.add(0, idStopService, 0, translate("Stop service"))
          }

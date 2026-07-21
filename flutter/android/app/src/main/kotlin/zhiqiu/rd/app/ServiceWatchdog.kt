@@ -106,7 +106,6 @@ object ServiceWatchdog {
         }
         if (isMainServiceRunning(context)) {
             Log.d(logTag, "MainService already running")
-            RemoteMqttManager.ensureConnected(context.applicationContext)
             return true
         }
         Log.i(logTag, "reviving MainService")

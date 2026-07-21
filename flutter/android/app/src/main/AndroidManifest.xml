@@ -110,11 +110,6 @@
         </service>
 
         <service
-            android:name=".MqttCommandService"
-            android:enabled="true"
-            android:exported="false" />
-
-        <service
             android:name=".FloatingWindowService"
             android:enabled="true" />
 

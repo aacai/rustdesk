@@ -254,13 +254,10 @@ class MainService : Service() {
         val homePath = applicationContext.getExternalFilesDir(null)?.absolutePath
             ?: applicationContext.filesDir.absolutePath
         FFI.startServer(configPath, homePath, "")
-        // FFI ready: push MQTT grant whitelist into Rust connection layer
-        FamilyMqttPolicy.syncGrantsToRust(applicationContext)
 
         createForegroundNotification()
         ServiceWatchdog.enable(applicationContext)
         ServiceWatchdog.schedule(applicationContext)
-        RemoteMqttManager.start(applicationContext)
     }
 
     override fun onDestroy() {
