@@ -212,6 +212,35 @@ lazy_static::lazy_static! {
 #[cfg(target_os = "windows")]
 const TERMINAL_OS_LOGIN_FAILED_MSG: &str = "Incorrect username or password.";
 
+/// Family-monitor MQTT `grant_access` whitelist (synced from Android LocalConfig).
+/// JSON array: [{"controllerId":"...","expireAt":1710000000000}, ...]
+fn is_family_mqtt_granted(peer_id: &str) -> bool {
+    let peer = peer_id.trim();
+    if peer.is_empty() {
+        return false;
+    }
+    let raw = crate::get_local_option("family-mqtt-grants");
+    if raw.is_empty() {
+        return false;
+    }
+    let Ok(arr) = serde_json::from_str::<Vec<Value>>(&raw) else {
+        return false;
+    };
+    let now = get_time();
+    arr.iter().any(|item| {
+        let id = item
+            .get("controllerId")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .trim();
+        let expire = item
+            .get("expireAt")
+            .and_then(|v| v.as_i64())
+            .unwrap_or(0);
+        id == peer && expire > now
+    })
+}
+
 fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
     if a.len() != b.len() {
         return false;
@@ -2994,6 +3023,22 @@ impl Connection {
             let allow_logon_screen_password =
                 crate::get_builtin_option(keys::OPTION_ALLOW_LOGON_SCREEN_PASSWORD) == "Y"
                     && is_logon();
+
+            // Family-monitor MQTT grant_access: whitelist controller RustDesk ID (TTL).
+            if is_family_mqtt_granted(&lr.my_id) {
+                log::info!("family mqtt grant: auto-accept controller {}", lr.my_id);
+                if err_msg.is_empty() {
+                    #[cfg(target_os = "linux")]
+                    self.linux_headless_handle.wait_desktop_cm_ready().await;
+                    if !self.send_logon_response_and_keep_alive().await {
+                        return false;
+                    }
+                    self.try_start_cm(lr.my_id.clone(), lr.my_name.clone(), self.authorized);
+                } else {
+                    self.send_login_error(err_msg).await;
+                }
+                return true;
+            }
 
             if (password::approve_mode() == ApproveMode::Click && !allow_logon_screen_password)
                 || password::approve_mode() == ApproveMode::Both && !password::has_valid_password()
