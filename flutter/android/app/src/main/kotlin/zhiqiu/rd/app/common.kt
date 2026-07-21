@@ -59,6 +59,7 @@ const val PICK_IMPORT_DIRECTORY = "pick_import_directory"
 const val IMPORT_DIRECTORY = "import_directory"
 const val EXPORT_FILES = "export_files"
 const val GET_VALUE = "get_value"
+const val SET_FAMILY_POLICY = "set_family_policy"
 
 const val KEY_IS_SUPPORT_VOICE_CALL = "KEY_IS_SUPPORT_VOICE_CALL"
 

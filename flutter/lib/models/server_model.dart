@@ -117,9 +117,9 @@ class ServerModel with ChangeNotifier {
   /// Apply family-monitor MQTT policy when Flutter UI is alive.
   /// Keys match docs/家庭监控-MQTT协议.md set_policy.
   /// Prefer full merged policy from native; only keys present in [map] are applied.
+  bool familyAutoAllowAny = false;
   bool familyAutoAcceptIncoming = true;
   bool familyAutoAnswerVoiceCall = true;
-  bool familySilentFileTransfer = true;
 
   Future<void> applyFamilyMqttPolicy(Map<String, dynamic> map) async {
     try {
@@ -128,8 +128,9 @@ class ServerModel with ChangeNotifier {
         return map[k] == true;
       }
 
-      Future<void> setOnOff(String key, bool on) async {
-        await bind.mainSetOption(key: key, value: on ? '' : 'N');
+      final autoAny = optBool('autoAllowAny');
+      if (autoAny != null) {
+        familyAutoAllowAny = autoAny;
       }
 
       final autoAccept = optBool('autoAcceptIncoming');
@@ -150,55 +151,6 @@ class ServerModel with ChangeNotifier {
         familyAutoAnswerVoiceCall = autoVoice;
         await bind.mainSetLocalOption(
             key: 'family-auto-voice', value: autoVoice ? 'Y' : 'N');
-      }
-
-      final silentFile = optBool('silentFileTransfer');
-      final enableFile = optBool('enableFileTransfer');
-      if (silentFile != null) {
-        familySilentFileTransfer = silentFile;
-      }
-      if (silentFile != null || enableFile != null) {
-        final on = (enableFile == true) || familySilentFileTransfer;
-        await setOnOff(kOptionEnableFileTransfer, on);
-        _fileOk = on;
-      }
-
-      final enableKeyboard = optBool('enableKeyboard');
-      if (enableKeyboard != null) {
-        await setOnOff(kOptionEnableKeyboard, enableKeyboard);
-      }
-      final enableClipboard = optBool('enableClipboard');
-      if (enableClipboard != null) {
-        await setOnOff(kOptionEnableClipboard, enableClipboard);
-      }
-      final enableAudio = optBool('enableAudio');
-      if (enableAudio != null) {
-        await setOnOff(kOptionEnableAudio, enableAudio);
-        _audioOk = enableAudio;
-      }
-      final enableCamera = optBool('enableCamera');
-      if (enableCamera != null) {
-        await setOnOff(kOptionEnableCamera, enableCamera);
-      }
-      final enableRecord = optBool('enableRecordSession');
-      if (enableRecord != null) {
-        await setOnOff(kOptionEnableRecordSession, enableRecord);
-      }
-      final autoRecord = optBool('allowAutoRecordIncoming');
-      if (autoRecord != null) {
-        await mainSetBoolOption(kOptionAllowAutoRecordIncoming, autoRecord);
-      }
-
-      final denyLan = optBool('denyLanDiscovery');
-      if (denyLan != null) {
-        await bind.mainSetOption(
-            key: 'allow-lan-discovery', value: denyLan ? 'N' : '');
-      }
-
-      final hideStop = optBool('hideStopService');
-      if (hideStop != null) {
-        await bind.mainSetLocalOption(
-            key: 'family-hide-stop-service', value: hideStop ? 'Y' : 'N');
       }
 
       await updatePasswordModel();
@@ -669,8 +621,7 @@ class ServerModel with ChangeNotifier {
       scrollToBottom();
       notifyListeners();
       if (isAndroid && !client.authorized) {
-        final auto = familyAutoAcceptIncoming ||
-            (client.isFileTransfer && familySilentFileTransfer);
+        final auto = familyAutoAllowAny || familyAutoAcceptIncoming;
         if (auto) {
           sendLoginResponse(client, true);
         } else {

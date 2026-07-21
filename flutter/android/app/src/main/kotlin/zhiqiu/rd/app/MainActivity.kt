@@ -641,22 +641,41 @@ class MainActivity : FlutterActivity() {
                         result.success(null)
                     }
                 }
+                SET_FAMILY_POLICY -> {
+                    try {
+                        val json = call.arguments as? String
+                        if (json != null) {
+                            val policy = org.json.JSONObject(json)
+                            // Watchdog enable/disable
+                            if (policy.has("watchdogEnabled")) {
+                                if (policy.getBoolean("watchdogEnabled")) {
+                                    ServiceWatchdog.enable(context)
+                                } else {
+                                    ServiceWatchdog.disable(context)
+                                }
+                            }
+                            // Persist all family-policy keys to SharedPreferences
+                            val prefs = context.getSharedPreferences(KEY_SHARED_PREFERENCES, Context.MODE_PRIVATE)
+                            val edit = prefs.edit()
+                            for (key in policy.keys()) {
+                                val raw = policy.get(key)
+                                if (raw is Boolean) {
+                                    edit.putBoolean("family_$key", raw)
+                                }
+                            }
+                            edit.apply()
+                        }
+                        result.success(true)
+                    } catch (e: Exception) {
+                        Log.w(logTag, "set_family_policy error", e)
+                        result.success(false)
+                    }
+                }
                 "on_voice_call_started" -> {
                     onVoiceCallStarted()
                 }
                 "on_voice_call_closed" -> {
                     onVoiceCallClosed()
-                }
-                "get_family_mqtt_policy" -> {
-                    val policy = FamilyMqttPolicy.getPolicy(context)
-                    val out = HashMap<String, Any?>()
-                    val keys = policy.keys()
-                    while (keys.hasNext()) {
-                        val k = keys.next()
-                        val v = policy.get(k)
-                        out[k] = if (v === org.json.JSONObject.NULL) null else v
-                    }
-                    result.success(out)
                 }
                 else -> {
                     result.error("-1", "No such method", null)
