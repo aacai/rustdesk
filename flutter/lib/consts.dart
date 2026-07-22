@@ -167,6 +167,7 @@ const String kOptionMqttAutoAllowAny = "mqtt-auto-allow-any";
 const String kOptionMqttAutoAnswerVoice = "mqtt-auto-answer-voice";
 const String kOptionMqttDenyLanDiscovery = "mqtt-deny-lan-discovery";
 const String kOptionMqttWatchdog = "mqtt-watchdog";
+const String kOptionMqttLogEnabled = "mqtt-log-enabled";
 const String kOptionAllowAutoUpdate = "allow-auto-update";
 const String kOptionAllowLinuxHeadless = "allow-linux-headless";
 const String kOptionAllowRemoveWallpaper = "allow-remove-wallpaper";
