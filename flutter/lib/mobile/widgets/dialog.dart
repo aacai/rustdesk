@@ -7,6 +7,11 @@ import 'package:get/get.dart';
 
 import '../../common.dart';
 import '../../models/platform_model.dart';
+import '../../utils/web_utils.dart';
+
+/// 云端服务器配置文档地址（在该文档中以 ```rustdesk 围栏写入配置 JSON）。
+const String kCloudServerConfigUrl =
+    'https://cnb.cool/zhiqiu520/remoteblog/-/git/raw/master/rdsk.txt';
 
 void _showSuccess() {
   showToast(translate("Successful"));
@@ -70,6 +75,7 @@ void showServerSettingsWithValue(
     OverlayDialogManager dialogManager,
     void Function(VoidCallback)? upSetState) async {
   var isInProgress = false;
+  var isFetchingCloud = false;
   final idCtrl = TextEditingController(text: serverConfig.idServer);
   final relayCtrl = TextEditingController(text: serverConfig.relayServer);
   final apiCtrl = TextEditingController(text: serverConfig.apiServer);
@@ -103,6 +109,31 @@ void showServerSettingsWithValue(
         isInProgress = false;
       });
       return ret;
+    }
+
+    Future<void> fetchCloudConfig() async {
+      setState(() {
+        isFetchingCloud = true;
+      });
+      try {
+        final cfg =
+            await fetchCloudServerConfig(Uri.parse(kCloudServerConfigUrl));
+        idCtrl.text = cfg.host;
+        keyCtrl.text = cfg.key;
+        if (cfg.relay.isNotEmpty) relayCtrl.text = cfg.relay;
+        showToast('云端配置已填入，请核对后点确定');
+      } catch (e) {
+        final msg = e.toString();
+        if (msg.contains('Redirect') || msg.contains('login')) {
+          showToast('获取失败：该链接需要登录/被重定向，请改用公开可访问的纯文本链接');
+        } else {
+          showToast('获取云端配置失败: $e');
+        }
+      } finally {
+        setState(() {
+          isFetchingCloud = false;
+        });
+      }
     }
 
     Widget buildField(
@@ -144,6 +175,17 @@ void showServerSettingsWithValue(
       title: Row(
         children: [
           Expanded(child: Text(translate('ID/Relay Server'))),
+          TextButton.icon(
+            icon: isFetchingCloud
+                ? SizedBox(
+                    width: 14,
+                    height: 14,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : Icon(Icons.cloud_download, size: 18),
+            label: Text(translate('获取云端配置')),
+            onPressed: isFetchingCloud ? null : fetchCloudConfig,
+          ),
           ...ServerConfigImportExportWidgets(controllers, errMsgs),
         ],
       ),
@@ -178,6 +220,11 @@ void showServerSettingsWithValue(
                   SizedBox(height: 8),
                   buildField('Key', keyCtrl, ''),
                   if (isInProgress)
+                    Padding(
+                      padding: EdgeInsets.only(top: 8),
+                      child: LinearProgressIndicator(),
+                    ),
+                  if (isFetchingCloud)
                     Padding(
                       padding: EdgeInsets.only(top: 8),
                       child: LinearProgressIndicator(),

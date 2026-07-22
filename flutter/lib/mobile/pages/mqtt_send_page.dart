@@ -5,6 +5,7 @@ import 'package:settings_ui/settings_ui.dart';
 
 import '../../common.dart';
 import '../../common/mqtt_coordinator.dart';
+import '../../consts.dart';
 
 /// MQTT 指令发送页 —— 以功能为导向，一键发送对应 MQTT 指令。
 ///
@@ -187,6 +188,24 @@ class _MqttSendPageState extends State<MqttSendPage> {
         ],
       ),
       body: SettingsList(sections: [
+        // MQTT 日志
+        SettingsSection(
+          title: const Text('MQTT 日志'),
+          tiles: [
+            SettingsTile(
+              title: const Text('打印 MQTT 日志'),
+              trailing: Switch(
+                value: mainGetLocalBoolOptionSync(kOptionMqttLogEnabled),
+                onChanged: (v) async {
+                  await mainSetLocalBoolOptionAndNotify(kOptionMqttLogEnabled, v);
+                  MqttCoordinator.instance.updateManagerLogEnabled(v);
+                  if (mounted) setState(() {});
+                  showToast(v ? 'MQTT 日志已开启' : 'MQTT 日志已关闭');
+                },
+              ),
+            ),
+          ],
+        ),
         // 设备选择
         SettingsSection(
           title: const Text('目标设备'),
