@@ -15,6 +15,10 @@ import AVFoundation
       NSLog("Failed to configure audio mixing: %@", error.localizedDescription)
     }
     dummyMethodToEnforceBundling();
+
+    // Register background fetch for MQTT reconnection
+    UIApplication.shared.setMinimumBackgroundFetchInterval(UIApplication.backgroundFetchIntervalMinimum)
+
     return super.application(application, didFinishLaunchingWithOptions: launchOptions)
   }
 
@@ -29,6 +33,11 @@ import AVFoundation
       launchOptions[.url] = launchURL
     }
     _ = super.application(UIApplication.shared, didFinishLaunchingWithOptions: launchOptions)
+  }
+
+  override func application(_ application: UIApplication, performFetchWithCompletionHandler completionHandler: @escaping (UIBackgroundFetchResult) -> Void) {
+    // MqttCoordinator.didChangeAppLifecycleState handles reconnection
+    completionHandler(.newData)
   }
     
   public func dummyMethodToEnforceBundling() {
