@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:typed_data';
 
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_hbb/common/widgets/setting_widgets.dart';
 import 'package:flutter_hbb/desktop/pages/desktop_setting_page.dart';
@@ -922,9 +923,21 @@ class _SettingsState extends State<SettingsPage> with WidgetsBindingObserver {
                           });
                         },
                 ),
-              SettingsTile(
+              SettingsTile.navigation(
                 title: Text(translate("Directory")),
                 description: Text(bind.mainVideoSaveDirectory(root: false)),
+                onPressed: isOptionFixed(kOptionVideoSaveDirectory)
+                    ? null
+                    : (context) async {
+                        String? selectedDirectory =
+                            await FilePicker.platform.getDirectoryPath();
+                        if (selectedDirectory != null) {
+                          await bind.mainSetLocalOption(
+                              key: kOptionVideoSaveDirectory,
+                              value: selectedDirectory);
+                          setState(() {});
+                        }
+                      },
               ),
             ],
           ),
@@ -1367,6 +1380,7 @@ class __FamilyMonitorPageState extends State<_FamilyMonitorPage>
   bool _autoAccept = false;
   bool _autoAnswerVoice = false;
   bool _denyLanDiscovery = false;
+  bool _watchdogEnabled = false;
   bool _udpPunch = false;
   bool _ipv6Punch = false;
   bool _directAccess = false;
@@ -1396,6 +1410,7 @@ class __FamilyMonitorPageState extends State<_FamilyMonitorPage>
     _autoAccept = mainGetLocalBoolOptionSync(kOptionMqttAutoAccept);
     _autoAnswerVoice = mainGetLocalBoolOptionSync(kOptionMqttAutoAnswerVoice);
     _denyLanDiscovery = mainGetLocalBoolOptionSync(kOptionMqttDenyLanDiscovery);
+    _watchdogEnabled = mainGetLocalBoolOptionSync(kOptionMqttWatchdog);
     _udpPunch = mainGetLocalBoolOptionSync(kOptionEnableUdpPunch);
     _ipv6Punch = mainGetLocalBoolOptionSync(kOptionEnableIpv6Punch);
     _directAccess = bind.mainGetLocalOption(key: kOptionDirectServer) == 'Y';
@@ -1413,8 +1428,13 @@ class __FamilyMonitorPageState extends State<_FamilyMonitorPage>
         value: value,
         onChanged: (v) async {
           await mainSetLocalBoolOptionAndNotify(optionKey, v);
+          showToast(v ? '已开启$title' : '已关闭$title');
         },
       ),
+      onPressed: (v) async {
+        await mainSetLocalBoolOptionAndNotify(optionKey, !value);
+        showToast(!value ? '已开启$title' : '已关闭$title');
+      },
     );
   }
 
@@ -1456,6 +1476,58 @@ class __FamilyMonitorPageState extends State<_FamilyMonitorPage>
     );
   }
 
+  SettingsTile _getPolicyTile() {
+    return SettingsTile(
+      title: const Text('获取策略'),
+      description: const Text('获取当前设备的远程策略配置'),
+      trailing: ElevatedButton(
+        onPressed: () async {
+          if (!MqttCoordinator.instance.isConnected) {
+            showToast('MQTT 未连接，无法获取策略');
+            return;
+          }
+          final deviceId = MqttCoordinator.instance.deviceId;
+          final sent = MqttCoordinator.instance.publishCmd(deviceId, 'get_policy', {});
+          if (!sent) {
+            showToast('发送失败');
+            return;
+          }
+          showToast('已发送获取策略请求');
+          // Subscribe for ACK
+          StreamSubscription? sub;
+          sub = MqttCoordinator.instance.onControllerUpMessage.listen((msg) {
+            if (msg['type'] == 'ack' && msg['action'] == 'get_policy') {
+              sub?.cancel();
+              final ok = msg['ok'] == true;
+              if (ok) {
+                final data = msg['data'] ?? {};
+                final pretty = const JsonEncoder.withIndent('  ').convert(data);
+                showDialog(
+                  context: context,
+                  builder: (_) => AlertDialog(
+                    title: const Text('当前策略'),
+                    content: SingleChildScrollView(
+                      child: Text(pretty, style: const TextStyle(fontFamily: 'monospace', fontSize: 13)),
+                    ),
+                    actions: [
+                      TextButton(
+                        onPressed: () => Navigator.pop(context),
+                        child: const Text('关闭'),
+                      ),
+                    ],
+                  ),
+                );
+              } else {
+                showToast('获取策略失败: ${msg['message'] ?? '未知错误'}');
+              }
+            }
+          });
+        },
+        child: const Text('获取'),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -1478,8 +1550,13 @@ class __FamilyMonitorPageState extends State<_FamilyMonitorPage>
         SettingsSection(
           title: const Text('MQTT'),
           tiles: [
+            SettingsTile(
+              title: const Text('本机设备 ID'),
+              value: Text(MqttCoordinator.instance.deviceId),
+            ),
             _mqttConnectionTile(),
             _sendCheckUpdateTile(),
+            _getPolicyTile(),
           ],
         ),
         SettingsSection(
@@ -1489,6 +1566,7 @@ class __FamilyMonitorPageState extends State<_FamilyMonitorPage>
             _switchTile('自动接听语音', _autoAnswerVoice, kOptionMqttAutoAnswerVoice),
             _switchTile('禁止局域网发现', _denyLanDiscovery, kOptionMqttDenyLanDiscovery),
             _switchTile('启用心跳', _heartbeatEnabled, kOptionMqttHeartbeat),
+            _switchTile('看门狗', _watchdogEnabled, kOptionMqttWatchdog),
           ],
         ),
         SettingsSection(

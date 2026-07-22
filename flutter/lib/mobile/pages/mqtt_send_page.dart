@@ -1,15 +1,15 @@
 import 'dart:async';
-import 'dart:convert';
 
 import 'package:flutter/material.dart';
+import 'package:settings_ui/settings_ui.dart';
 
+import '../../common.dart';
 import '../../common/mqtt_coordinator.dart';
 
-/// Page for sending MQTT command envelopes to family-monitor devices.
+/// MQTT 指令发送页 —— 以功能为导向，一键发送对应 MQTT 指令。
 ///
-/// Long-press "家庭监控" title on [ServerPage] opens this page. It composes
-/// the protocol envelope (v / requestId / deviceId / action / ts / params)
-/// and publishes it to [kTopicCmd] via [MqttCoordinator].
+/// 长按「家庭监控」标题进入此页面。每个操作对应协议中的一个 action，
+/// 自动填充 requestId / ts / expireAt / deviceId，用户无需手动拼 JSON。
 class MqttSendPage extends StatefulWidget {
   const MqttSendPage({Key? key}) : super(key: key);
 
@@ -18,226 +18,258 @@ class MqttSendPage extends StatefulWidget {
 }
 
 class _MqttSendPageState extends State<MqttSendPage> {
-  final _deviceIdCtrl = TextEditingController();
-  final _paramsCtrl = TextEditingController(text: '{}');
-  final List<Map<String, dynamic>> _log = [];
-  final _pretty = const JsonEncoder.withIndent('  ');
+  String _deviceId = '';
+  bool _mqttConnected = false;
 
-  String _action = 'ping';
-  StreamSubscription<Map<String, dynamic>>? _sub;
-
-  static const List<String> _actions = [
-    'ping',
-    'get_status',
-    'revive',
-    'start_rustdesk',
-    'enable_watchdog',
-    'disable_watchdog',
-    'reboot_app',
-    'get_update_info',
-    'open_download',
-    'grant_access',
-    'revoke_access',
-    'revoke_all_access',
-    'list_grants',
-    'set_policy',
-    'get_policy',
-    'set_config',
-    'get_config',
-    'open_accessibility_settings',
-    'open_overlay_settings',
-    'request_media_projection',
-    'notify',
-  ];
+  StreamSubscription<bool>? _connSub;
+  StreamSubscription<void>? _devicesSub;
 
   @override
   void initState() {
     super.initState();
-    // MQTT 由 MqttCoordinator 单例在 app 启动时常驻连接，页面只订阅其状态流。
-    _sub = MqttCoordinator.instance.onControllerUpMessage.listen(_onUp);
+    _mqttConnected = MqttCoordinator.instance.controllerConnected;
+    _connSub = MqttCoordinator.instance.onControllerConnection.listen((v) {
+      if (mounted) setState(() => _mqttConnected = v);
+    });
+    _devicesSub = MqttCoordinator.instance.onDevicesChanged.listen((_) {
+      if (mounted) setState(() {});
+    });
   }
 
   @override
   void dispose() {
-    _sub?.cancel();
-    _deviceIdCtrl.dispose();
-    _paramsCtrl.dispose();
+    _connSub?.cancel();
+    _devicesSub?.cancel();
     super.dispose();
   }
 
-  void _onUp(Map<String, dynamic> msg) {
-    final copy = Map<String, dynamic>.from(msg)..remove('topic');
-    _addLog('recv', _pretty.convert(copy), topic: msg['topic'] as String?);
-  }
-
-  void _addLog(String dir, String text, {String? topic, bool error = false}) {
-    if (!mounted) return;
-    setState(() {
-      _log.insert(0, {
-        'dir': dir,
-        'text': text,
-        'topic': topic,
-        'error': error,
-        'ts': DateTime.now(),
-      });
-    });
-  }
-
-  void _send() {
-    final deviceId = _deviceIdCtrl.text.trim();
-    Map<String, dynamic> params = {};
-    final raw = _paramsCtrl.text.trim();
-    if (raw.isNotEmpty) {
-      try {
-        final decoded = jsonDecode(raw);
-        if (decoded is Map<String, dynamic>) {
-          params = decoded;
-        } else if (decoded is Map) {
-          params = Map<String, dynamic>.from(decoded);
-        } else {
-          _addLog('send', 'params 必须是 JSON 对象', error: true);
-          return;
-        }
-      } catch (e) {
-        _addLog('send', '参数 JSON 解析失败: $e', error: true);
-        return;
-      }
-    }
-    if (!MqttCoordinator.instance.controllerConnected) {
-      _addLog('send', 'MQTT 控制器未连接', error: true);
+  void _send(String action, Map<String, dynamic> params) {
+    final did = _deviceId.trim();
+    if (did.isEmpty) {
+      showToast('请先输入目标 deviceId');
       return;
     }
-    MqttCoordinator.instance.publishCmd(deviceId, _action, params);
-    _addLog('send', _pretty.convert({
-      'deviceId': deviceId.isEmpty ? '*' : deviceId,
-      'action': _action,
-      'params': params,
-    }));
+    final sent = MqttCoordinator.instance.publishCmd(did, action, params);
+    if (!sent) {
+      showToast('发送失败：MQTT 未连接');
+      return;
+    }
+    showToast('已发送 $action → $did');
+  }
+
+  void _showGrantDialog() {
+    final ctrlId = TextEditingController();
+    final ttlCtrl = TextEditingController(text: '7200');
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('授权控制'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            TextField(
+              controller: ctrlId,
+              decoration: const InputDecoration(
+                labelText: '控制端 RustDesk ID *',
+                border: OutlineInputBorder(),
+                isDense: true,
+              ),
+            ),
+            const SizedBox(height: 10),
+            TextField(
+              controller: ttlCtrl,
+              keyboardType: TextInputType.number,
+              decoration: const InputDecoration(
+                labelText: '有效秒数（默认 7200）',
+                border: OutlineInputBorder(),
+                isDense: true,
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('取消'),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              final cid = ctrlId.text.trim();
+              if (cid.isEmpty) return;
+              final ttl = int.tryParse(ttlCtrl.text.trim()) ?? 7200;
+              Navigator.pop(ctx);
+              _send('grant_access', {'controllerId': cid, 'ttlSec': ttl});
+            },
+            child: const Text('确认'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showRevokeDialog() {
+    final ctrlId = TextEditingController();
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('撤销授权'),
+        content: TextField(
+          controller: ctrlId,
+          decoration: const InputDecoration(
+            labelText: '控制端 RustDesk ID *',
+            border: OutlineInputBorder(),
+            isDense: true,
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('取消'),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              final cid = ctrlId.text.trim();
+              if (cid.isEmpty) return;
+              Navigator.pop(ctx);
+              _send('revoke_access', {'controllerId': cid});
+            },
+            child: const Text('确认'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ---- 通用 tile 构建 ----
+
+  SettingsTile _actionTile(String title, String action, Map<String, dynamic> params) {
+    return SettingsTile(
+      title: Text(title),
+      trailing: ElevatedButton(
+        onPressed: () => _send(action, params),
+        child: const Text('发送'),
+      ),
+    );
+  }
+
+  SettingsTile _dialogTile(String title, VoidCallback onTap) {
+    return SettingsTile(
+      title: Text(title),
+      trailing: ElevatedButton(
+        onPressed: onTap,
+        child: const Text('发送'),
+      ),
+    );
   }
 
   @override
   Widget build(BuildContext context) {
+    final devices = MqttCoordinator.instance.devices;
     return Scaffold(
       appBar: AppBar(
         leading: IconButton(
           onPressed: () => Navigator.pop(context),
           icon: const Icon(Icons.arrow_back_ios),
         ),
-        title: const Text('MQTT 参数发送'),
+        title: const Text('MQTT 指令发送'),
         centerTitle: true,
         actions: [
-          StreamBuilder<bool>(
-            initialData: MqttCoordinator.instance.controllerConnected,
-            stream: MqttCoordinator.instance.onControllerConnection,
-            builder: (c, snap) {
-              final ok = snap.data ?? false;
-              return Padding(
-                padding: const EdgeInsets.only(right: 12),
-                child: Row(children: [
-                  Icon(ok ? Icons.check_circle : Icons.error,
-                      color: ok ? Colors.green : Colors.red, size: 16),
-                  const SizedBox(width: 4),
-                  Text(ok ? '已连接' : '未连接',
-                      style: const TextStyle(fontSize: 12)),
-                ]),
-              );
-            },
-          ),
-        ],
-      ),
-      body: Column(
-        children: [
           Padding(
-            padding: const EdgeInsets.all(12),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                TextField(
-                  controller: _deviceIdCtrl,
-                  decoration: const InputDecoration(
-                    labelText: '目标 deviceId（留空或 * 为广播）',
-                    border: OutlineInputBorder(),
-                    isDense: true,
-                  ),
-                ),
-                const SizedBox(height: 10),
-                DropdownButtonFormField<String>(
-                  value: _action,
-                  decoration: const InputDecoration(
-                    labelText: 'Action',
-                    border: OutlineInputBorder(),
-                    isDense: true,
-                  ),
-                  items: _actions
-                      .map((a) =>
-                          DropdownMenuItem(value: a, child: Text(a)))
-                      .toList(),
-                  onChanged: (v) => setState(() => _action = v ?? _action),
-                ),
-                const SizedBox(height: 10),
-                TextField(
-                  controller: _paramsCtrl,
-                  maxLines: 4,
-                  decoration: const InputDecoration(
-                    labelText: 'params（JSON，可留空 {}）',
-                    border: OutlineInputBorder(),
-                    isDense: true,
-                    alignLabelWithHint: true,
-                  ),
-                ),
-                const SizedBox(height: 10),
-                SizedBox(
-                  width: double.infinity,
-                  child: ElevatedButton(
-                    onPressed: _send,
-                    child: const Text('发送'),
-                  ),
-                ),
-              ],
-            ),
-          ),
-          const Divider(height: 1),
-          Expanded(
-            child: _log.isEmpty
-                ? const Center(child: Text('暂无消息'))
-                : ListView.separated(
-                    padding: const EdgeInsets.all(8),
-                    itemCount: _log.length,
-                    separatorBuilder: (_, __) => const Divider(height: 1),
-                    itemBuilder: (c, i) {
-                      final item = _log[i];
-                      final isRecv = item['dir'] == 'recv';
-                      final isErr = item['error'] == true;
-                      final ts = (item['ts'] as DateTime)
-                          .toString()
-                          .substring(11, 19);
-                      final topic = item['topic'] as String?;
-                      return ListTile(
-                        dense: true,
-                        leading: Icon(
-                          isRecv ? Icons.arrow_downward : Icons.arrow_upward,
-                          color: isRecv ? Colors.blue : Colors.orange,
-                          size: 18,
-                        ),
-                        title: Text(
-                          item['text'] as String,
-                          style: TextStyle(
-                            fontFamily: 'monospace',
-                            fontSize: 12,
-                            color: isErr ? Colors.red : null,
-                          ),
-                        ),
-                        subtitle: Text(
-                          '${isRecv ? '接收' : '发送'} $ts'
-                          '${topic != null ? ' · $topic' : ''}',
-                          style: const TextStyle(fontSize: 10),
-                        ),
-                      );
-                    },
-                  ),
+            padding: const EdgeInsets.only(right: 12),
+            child: Row(children: [
+              Icon(_mqttConnected ? Icons.check_circle : Icons.error,
+                  color: _mqttConnected ? Colors.green : Colors.red, size: 16),
+              const SizedBox(width: 4),
+              Text(_mqttConnected ? '已连接' : '未连接',
+                  style: const TextStyle(fontSize: 12)),
+            ]),
           ),
         ],
       ),
+      body: SettingsList(sections: [
+        // 设备选择
+        SettingsSection(
+          title: const Text('目标设备'),
+          tiles: [
+            SettingsTile(
+              title: TextField(
+                controller: TextEditingController(text: _deviceId),
+                decoration: const InputDecoration(
+                  labelText: 'deviceId',
+                  border: OutlineInputBorder(),
+                  isDense: true,
+                ),
+                onChanged: (v) => _deviceId = v,
+              ),
+            ),
+            if (devices.isNotEmpty)
+              SettingsTile(
+                title: const Text('在线设备（点击填入）'),
+                description: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: devices.map<Widget>((dev) {
+                    final id = dev['deviceId']?.toString() ?? '';
+                    final rd = dev['rustdeskId']?.toString() ?? '';
+                    final ip = dev['ip']?.toString() ?? '';
+                    return ListTile(
+                      dense: true,
+                      contentPadding: EdgeInsets.zero,
+                      title: Text(id, style: const TextStyle(fontSize: 13)),
+                      subtitle: Text('RD: $rd  IP: $ip',
+                          style: const TextStyle(fontSize: 11)),
+                      trailing: _deviceId == id
+                          ? const Icon(Icons.check_circle, color: Colors.green, size: 18)
+                          : null,
+                      onTap: () => setState(() => _deviceId = id),
+                    );
+                  }).toList(),
+                ),
+              ),
+          ],
+        ),
+        // 策略控制
+        SettingsSection(
+          title: const Text('策略控制'),
+          tiles: [
+            _actionTile('启用心跳', 'set_policy', {'heartbeatEnabled': true}),
+            _actionTile('禁用心跳', 'set_policy', {'heartbeatEnabled': false}),
+            _actionTile('允许被控', 'set_policy', {'autoAcceptIncoming': true}),
+            _actionTile('禁止被控', 'set_policy', {'autoAcceptIncoming': false}),
+            _actionTile('自动接听开', 'set_policy', {'autoAnswerVoiceCall': true}),
+            _actionTile('自动接听关', 'set_policy', {'autoAnswerVoiceCall': false}),
+            _actionTile('看门狗开', 'set_policy', {'watchdogEnabled': true}),
+            _actionTile('看门狗关', 'set_policy', {'watchdogEnabled': false}),
+            _actionTile('获取策略', 'get_policy', {}),
+          ],
+        ),
+        // 授权管理
+        SettingsSection(
+          title: const Text('授权管理'),
+          tiles: [
+            _dialogTile('授权控制', _showGrantDialog),
+            _dialogTile('撤销授权', _showRevokeDialog),
+            _actionTile('撤销全部授权', 'revoke_all_access', {}),
+            _actionTile('查看授权列表', 'list_grants', {}),
+          ],
+        ),
+        // 运维
+        SettingsSection(
+          title: const Text('运维'),
+          tiles: [
+            _actionTile('Ping', 'ping', {}),
+            _actionTile('获取状态', 'get_status', {}),
+            _actionTile('拉起服务', 'revive', {}),
+            _actionTile('启动 RustDesk', 'start_rustdesk', {}),
+          ],
+        ),
+        // 版本
+        SettingsSection(
+          title: const Text('版本'),
+          tiles: [
+            _actionTile('检查更新', 'get_update_info', {}),
+          ],
+        ),
+      ]),
     );
   }
 }
