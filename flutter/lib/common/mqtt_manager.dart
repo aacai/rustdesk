@@ -50,6 +50,9 @@ class MqttManager {
   final int _maxRetryDelaySec;
   MqttDelegate? delegate;
 
+  /// Whether MqttCoordinator allows log output.
+  bool logEnabled = true;
+
   MqttServerClient? _client;
   Timer? _heartbeatTimer;
   Timer? _retryTimer;
@@ -82,6 +85,10 @@ class MqttManager {
 
   bool get isConnected => _connected;
 
+  void _log(String message) {
+    if (logEnabled) debugPrint(message);
+  }
+
   // ---------------------------------------- public API
 
   /// Connect to broker with automatic exponential-backoff retry.
@@ -91,11 +98,11 @@ class MqttManager {
   /// owned by [_onConnected]/[_onDisconnected], not this method.
   void connect() {
     if (_stopping) return;
-    debugPrint('[MqttManager] connect() called (host=$_host:$_port, clientId=$_clientId)');
+    _log('[MqttManager] connect() called (host=$_host:$_port, clientId=$_clientId)');
     _connectOnce().then((_) {
       // State handled in _onConnected.
     }).catchError((e) {
-      debugPrint('[MqttManager] connect() error: $e');
+      _log('[MqttManager] connect() error: $e');
       if (_stopping) return;
       _scheduleReconnect('connect failed: $e');
     });
@@ -111,7 +118,7 @@ class MqttManager {
     if (_stopping) return;
     _retryAttempt++;
     final delay = _backoffDelay();
-    debugPrint('[MqttManager] attempt $_retryAttempt ($reason), retry in ${delay}s');
+    _log('[MqttManager] attempt $_retryAttempt ($reason), retry in ${delay}s');
     _retryTimer?.cancel();
     _retryTimer = Timer(Duration(seconds: delay), connect);
   }
@@ -223,7 +230,7 @@ class MqttManager {
   }
 
   void _onConnected() {
-    debugPrint('[MqttManager] connected');
+    _log('[MqttManager] connected');
     _retryAttempt = 0;
     _connected = true;
     _connectionController.add(true);
@@ -236,7 +243,7 @@ class MqttManager {
   }
 
   void _onDisconnected() {
-    debugPrint('[MqttManager] disconnected');
+    _log('[MqttManager] disconnected');
     stopHeartbeat();
     if (_connected) {
       _connected = false;
@@ -247,7 +254,7 @@ class MqttManager {
   }
 
   void _onSubscribed(String topic) {
-    debugPrint('[MqttManager] subscribed: $topic');
+    _log('[MqttManager] subscribed: $topic');
   }
 
   // ---------------------------------------- raw message → parsed command
@@ -445,7 +452,7 @@ class MqttManager {
     try {
       _client!.publishMessage(topic, qos, MqttClientPayloadBuilder().addString(payload).payload!);
     } catch (e) {
-      debugPrint('[MqttManager] publish $topic: $e');
+      _log('[MqttManager] publish $topic: $e');
     }
   }
 

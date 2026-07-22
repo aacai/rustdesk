@@ -30,6 +30,13 @@ class MqttCoordinator with WidgetsBindingObserver {
 
   static final MqttCoordinator instance = MqttCoordinator._();
 
+  /// Conditionally print MQTT logs based on the log-enabled option.
+  static void log(String message) {
+    if (mainGetLocalBoolOptionSync(kOptionMqttLogEnabled)) {
+      debugPrint(message);
+    }
+  }
+
   MqttManager? _manager;
   bool _started = false;
   bool _starting = false;
@@ -90,7 +97,7 @@ class MqttCoordinator with WidgetsBindingObserver {
   bool sendCheckUpdate() {
     final mgr = _manager;
     if (mgr == null || !mgr.isConnected) {
-      debugPrint('[MqttCoordinator] sendCheckUpdate skipped: not connected');
+      log('[MqttCoordinator] sendCheckUpdate skipped: not connected');
       return false;
     }
     mgr.publish(
@@ -105,7 +112,7 @@ class MqttCoordinator with WidgetsBindingObserver {
       }),
       MqttQos.atLeastOnce,
     );
-    debugPrint('[MqttCoordinator] sendCheckUpdate published to $kTopicCmd');
+    log('[MqttCoordinator] sendCheckUpdate published to $kTopicCmd');
     return true;
   }
 
@@ -118,10 +125,10 @@ class MqttCoordinator with WidgetsBindingObserver {
     try {
       _deviceId = await bind.mainGetMyId();
     } catch (e) {
-      debugPrint('[MqttCoordinator] mainGetMyId failed: $e');
+      log('[MqttCoordinator] mainGetMyId failed: $e');
       _deviceId = '';
     }
-    debugPrint('[MqttCoordinator] start() deviceId="$_deviceId"');
+    log('[MqttCoordinator] start() deviceId="$_deviceId"');
     if (_deviceId.isEmpty) {
       _scheduleRetryId();
       return;
@@ -145,7 +152,7 @@ class MqttCoordinator with WidgetsBindingObserver {
     if (state == AppLifecycleState.resumed) {
       // Back to foreground: check MQTT and reconnect if needed
       if (_started && _manager != null && !_manager!.isConnected) {
-        debugPrint('[MqttCoordinator] app resumed, reconnecting MQTT');
+        log('[MqttCoordinator] app resumed, reconnecting MQTT');
         _manager!.connect();
       }
     }
@@ -157,7 +164,7 @@ class MqttCoordinator with WidgetsBindingObserver {
     try {
       _deviceId = await bind.mainGetMyId();
     } catch (e) {
-      debugPrint('[MqttCoordinator] mainGetMyId (retry) failed: $e');
+      log('[MqttCoordinator] mainGetMyId (retry) failed: $e');
       return;
     }
     if (_deviceId.isNotEmpty) {
@@ -176,7 +183,7 @@ class MqttCoordinator with WidgetsBindingObserver {
       try {
         _deviceId = await bind.mainGetMyId();
       } catch (e) {
-        debugPrint('[MqttCoordinator] mainGetMyId (retry) failed: $e');
+        log('[MqttCoordinator] mainGetMyId (retry) failed: $e');
         _scheduleRetryId();
         return;
       }
@@ -195,11 +202,11 @@ class MqttCoordinator with WidgetsBindingObserver {
     try {
       final pem = await rootBundle.loadString('assets/emqxsl-ca.crt');
       if (pem.isNotEmpty) {
-        debugPrint('[MqttCoordinator] CA loaded from asset (${pem.length} bytes)');
+        log('[MqttCoordinator] CA loaded from asset (${pem.length} bytes)');
         return pem;
       }
     } catch (e) {
-      debugPrint('[MqttCoordinator] CA asset load failed: $e');
+      log('[MqttCoordinator] CA asset load failed: $e');
     }
     // Fallback: common on-device locations.
     final candidates = [
@@ -212,12 +219,12 @@ class MqttCoordinator with WidgetsBindingObserver {
         if (await file.exists()) {
           final pem = await file.readAsString();
           if (pem.isNotEmpty) {
-            debugPrint('[MqttCoordinator] CA loaded from file ($p, ${pem.length} bytes)');
+            log('[MqttCoordinator] CA loaded from file ($p, ${pem.length} bytes)');
             return pem;
           }
         }
       } catch (e) {
-        debugPrint('[MqttCoordinator] CA file load failed ($p): $e');
+        log('[MqttCoordinator] CA file load failed ($p): $e');
       }
     }
     throw StateError('EMQX CA certificate not found (asset or file)');
@@ -237,7 +244,7 @@ class MqttCoordinator with WidgetsBindingObserver {
     const password = _kMqttPass;
 
     caPem.then((pem) {
-      debugPrint('[MqttCoordinator] CA loaded (${pem.length} bytes), creating manager');
+      log('[MqttCoordinator] CA loaded (${pem.length} bytes), creating manager');
       _applyConnectionDefaults();
       _manager = MqttManager(
         host: host,
@@ -247,7 +254,7 @@ class MqttCoordinator with WidgetsBindingObserver {
         caCertPem: pem,
         clientId: clientId,
         delegate: _MqttFfiDelegate(),
-      );
+      )..logEnabled = mainGetLocalBoolOptionSync(kOptionMqttLogEnabled);
 
       familyMonitorChanged.addListener(_onPolicyChanged);
       // Push current policy to Kotlin on startup
@@ -268,7 +275,7 @@ class MqttCoordinator with WidgetsBindingObserver {
       _starting = false;
     }).catchError((e) {
       _starting = false;
-      debugPrint('[MqttCoordinator] CA load failed: $e');
+      log('[MqttCoordinator] CA load failed: $e');
     });
   }
 
@@ -323,10 +330,15 @@ class MqttCoordinator with WidgetsBindingObserver {
     }
   }
 
+  /// Update the [MqttManager.logEnabled] flag when the user toggles the log switch.
+  void updateManagerLogEnabled(bool v) {
+    _manager?.logEnabled = v;
+  }
+
   /// Called by native side to check and reconnect MQTT if disconnected.
   void checkAndReconnect() {
     if (_started && _manager != null && !_manager!.isConnected) {
-      debugPrint('[MqttCoordinator] native triggered reconnect');
+      log('[MqttCoordinator] native triggered reconnect');
       _manager!.connect();
     }
   }

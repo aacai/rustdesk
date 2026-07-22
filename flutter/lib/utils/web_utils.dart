@@ -2,6 +2,8 @@ import 'dart:async';
 import 'dart:io';
 import 'dart:typed_data';
 
+import 'dart:convert';
+
 import 'package:http/http.dart' as http;
 
 import 'http_service.dart';
@@ -74,4 +76,77 @@ Future<File> downloadFile(
   } finally {
     if (client == null) c.close();
   }
+}
+
+/// 从网页 / 纯文本内容中抽取 rustdesk 配置 JSON。
+///
+/// 截取策略（按优先级）：
+/// 1. 优先匹配 ```rustdesk 围栏代码块（精确，避免误抓页面其它代码块）；
+/// 2. 找不到围栏时，回退为抓取文本中第一个花括号 `{...}` JSON 段
+///    （适配 raw 纯文本文件，允许 JSON 前后有其它说明文字）。
+/// 都找不到时返回 null。
+String? extractRustdeskFencedJson(String html) {
+  final fence = RegExp(r'```rustdesk\s*?\n(.*?)```', dotAll: true);
+  final m = fence.firstMatch(html);
+  if (m != null) return m.group(1)?.trim();
+  // 回退：抓第一个 { 到最后一个 } 之间的内容作为裸 JSON。
+  final start = html.indexOf('{');
+  final end = html.lastIndexOf('}');
+  if (start >= 0 && end > start) {
+    return html.substring(start, end + 1).trim();
+  }
+  return null;
+}
+
+/// 从 ```rustdesk 围栏 JSON 文本解析出服务器配置。
+///
+/// 仅解析 [host] / [relay] / [key] 三个字段（无 api）。
+/// [host] 或 [key] 缺失时抛出 [Exception]；
+/// [relay] 为空或缺失时返回空串，由调用方决定是否填充。
+({String host, String relay, String key}) parseServerConfigJson(
+    String jsonText) {
+  final Map<String, dynamic> json;
+  try {
+    json = jsonDecode(jsonText);
+  } catch (e) {
+    throw Exception('配置 JSON 解析失败: $e');
+  }
+  final host = (json['host'] as String? ?? '').trim();
+  final key = (json['key'] as String? ?? '').trim();
+  final relay = (json['relay'] as String? ?? '').trim();
+  if (host.isEmpty || key.isEmpty) {
+    throw Exception('云端配置缺少 host 或 key');
+  }
+  return (host: host, relay: relay, key: key);
+}
+
+/// 用普通 [http] 请求抓取网页文本，避免依赖 Rust FFI HTTP 通道
+/// （[HttpService] 在未初始化时会抛 LateInitializationError）。
+Future<String> _fetchPlainText(Uri url) async {
+  final resp = await http.get(url);
+  if (resp.statusCode < 200 || resp.statusCode >= 300) {
+    throw Exception('HTTP ${resp.statusCode}: $url');
+  }
+  return resp.body;
+}
+
+/// 抓取云端服务器配置文档，截取其中的 rustdesk 配置 JSON 并解析。
+///
+/// [fetcher] 可注入，默认走 [_fetchPlainText]（普通 http，便于测试且不依赖 FFI）。
+/// [host] 或 [key] 缺失时抛出 [Exception]；
+/// [relay] 为空或缺失时返回空串，由调用方决定是否填充。
+Future<({String host, String relay, String key})> fetchCloudServerConfig(
+    Uri url,
+    {Future<String> Function(Uri)? fetcher}) async {
+  print('[cloudConfig] fetching $url');
+  final html = await (fetcher ?? _fetchPlainText)(url);
+  print('[cloudConfig] html length=${html.length}, '
+      'hasRustdeskFence=${extractRustdeskFencedJson(html) != null}');
+  final jsonText = extractRustdeskFencedJson(html);
+  if (jsonText == null) {
+    print('[cloudConfig] no rustdesk fence found in page');
+    throw Exception('未在页面中找到 rustdesk 配置块');
+  }
+  print('[cloudConfig] extracted json: $jsonText');
+  return parseServerConfigJson(jsonText);
 }
