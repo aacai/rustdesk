@@ -9,6 +9,7 @@ import 'package:get/get.dart';
 import 'package:provider/provider.dart';
 
 import '../../common.dart';
+import '../../common/mqtt_coordinator.dart';
 import '../../common/widgets/dialog.dart';
 import '../../consts.dart';
 import '../../models/platform_model.dart';
@@ -960,6 +961,11 @@ void androidChannelInit() {
             if (gFFI.serverModel.isStart) {
               gFFI.serverModel.stopService();
             }
+            break;
+          }
+        case "check_mqtt_reconnect":
+          {
+            MqttCoordinator.instance.checkAndReconnect();
             break;
           }
       }

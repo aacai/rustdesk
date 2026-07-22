@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/foundation.dart';
+import 'package:flutter/widgets.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_hbb/common.dart';
 import 'package:flutter_hbb/models/platform_model.dart';
@@ -24,7 +25,7 @@ const String _kMqttPass = 'xiangqi2024';
 /// Owns a [MqttManager] and implements [MqttDelegate] to bridge between pure
 /// MQTT and application-layer concerns (FFI local options, Kotlin method
 /// channels for watchdog/keep-alive).
-class MqttCoordinator {
+class MqttCoordinator with WidgetsBindingObserver {
   MqttCoordinator._();
 
   static final MqttCoordinator instance = MqttCoordinator._();
@@ -112,6 +113,7 @@ class MqttCoordinator {
 
   Future<void> start() async {
     if (_started) return;
+    WidgetsBinding.instance.addObserver(this);
     _started = true;
     try {
       _deviceId = await bind.mainGetMyId();
@@ -128,11 +130,25 @@ class MqttCoordinator {
   }
 
   void stop() {
+    WidgetsBinding.instance.removeObserver(this);
+    _stopNativeForegroundService();
+    _updateMqttStatusToNative(false);
     _started = false;
     familyMonitorChanged.removeListener(_onPolicyChanged);
     _retryTimer?.cancel();
     _manager?.disconnect();
     _manager = null;
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      // Back to foreground: check MQTT and reconnect if needed
+      if (_started && _manager != null && !_manager!.isConnected) {
+        debugPrint('[MqttCoordinator] app resumed, reconnecting MQTT');
+        _manager!.connect();
+      }
+    }
   }
 
   /// Called when RustDesk ID becomes available later (e.g. after service start).
@@ -236,7 +252,15 @@ class MqttCoordinator {
       familyMonitorChanged.addListener(_onPolicyChanged);
       // Push current policy to Kotlin on startup
       _pushPolicyToNative();
-      _manager!.onConnectionChanged.listen((c) => _connectionController.add(c));
+      _manager!.onConnectionChanged.listen((c) {
+        _connectionController.add(c);
+        if (c) {
+          _startNativeForegroundService();
+          _updateMqttStatusToNative(true);
+        } else {
+          _updateMqttStatusToNative(false);
+        }
+      });
       _connectionController.add(_manager!.isConnected);
       _manager!.connect();
       _manager!.onUpMessage.listen(_onUpMessage);
@@ -279,6 +303,32 @@ class MqttCoordinator {
     };
     gFFI.invokeMethod(AndroidChannel.kSetFamilyPolicy, jsonEncode(policy));
     gFFI.serverModel.applyFamilyMqttPolicy(policy);
+  }
+
+  void _startNativeForegroundService() {
+    if (Platform.isAndroid) {
+      gFFI.invokeMethod(AndroidChannel.kStartMqttForeground);
+    }
+  }
+
+  void _stopNativeForegroundService() {
+    if (Platform.isAndroid) {
+      gFFI.invokeMethod(AndroidChannel.kStopMqttForeground);
+    }
+  }
+
+  void _updateMqttStatusToNative(bool connected) {
+    if (Platform.isAndroid) {
+      gFFI.invokeMethod('update_mqtt_status', {'connected': connected});
+    }
+  }
+
+  /// Called by native side to check and reconnect MQTT if disconnected.
+  void checkAndReconnect() {
+    if (_started && _manager != null && !_manager!.isConnected) {
+      debugPrint('[MqttCoordinator] native triggered reconnect');
+      _manager!.connect();
+    }
   }
 
   /// Test-only: start the single MQTT connection with an injected deviceId
