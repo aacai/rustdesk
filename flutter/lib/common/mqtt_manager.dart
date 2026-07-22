@@ -287,9 +287,12 @@ class MqttManager {
       final requestId = json['requestId'] as String? ?? '';
       final action = (json['action'] as String? ?? '').toLowerCase();
 
-      // Target check
+      // Target check — match against clientId or the raw deviceId suffix.
+      // clientId is "rd-dev-{deviceId}", but commands use the raw deviceId.
       final target = json['deviceId'] as String? ?? '';
-      if (target.isNotEmpty && target != '*' && target != _clientId) continue;
+      final rawDeviceId = _clientId.startsWith('rd-dev-')
+          ? _clientId.substring(7) : _clientId;
+      if (target.isNotEmpty && target != '*' && target != _clientId && target != rawDeviceId) continue;
 
       // Sensitive actions without specific target
       if (_isSensitive(action) && (target.isEmpty || target == '*')) {
@@ -393,6 +396,17 @@ class MqttManager {
           data,
         );
         break;
+      case 'revive':
+      case 'start_rustdesk':
+      case 'enable_watchdog':
+      case 'disable_watchdog':
+      case 'reboot_app':
+        // These actions require native-side implementation; acknowledge receipt.
+        _publishAck(requestId, action, true, 0, 'received', {});
+        break;
+      default:
+        _publishAck(requestId, action, false, 404, 'unknown action', {});
+        break;
     }
   }
 
@@ -437,6 +451,9 @@ class MqttManager {
 
   void _publishAck(String requestId, String action, bool ok, int code, String message,
       Map<String, dynamic> data) {
+    // Use raw deviceId (without rd-dev- prefix) to match protocol expectations.
+    final ackDeviceId = _clientId.startsWith('rd-dev-')
+        ? _clientId.substring(7) : _clientId;
     _publish(
         kTopicUp,
         jsonEncode({
@@ -447,7 +464,7 @@ class MqttManager {
           'ok': ok,
           'code': code,
           'message': message,
-          'deviceId': _clientId,
+          'deviceId': ackDeviceId,
           'ts': DateTime.now().millisecondsSinceEpoch,
           'data': data,
         }),
