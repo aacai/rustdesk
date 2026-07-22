@@ -69,7 +69,15 @@ class InputService : AccessibilityService() {
             get() = ctx != null
         /** Interval for accessibility-based MainService keepalive. */
         private const val KEEP_ALIVE_INTERVAL_MS = 60_000L
+        private const val KEEP_ALIVE_INTERVAL_DISCONNECTED_MS = 15_000L  // Faster retry when MQTT disconnected
         private const val EVENT_REVIVE_THROTTLE_MS = 30_000L
+        private var mqttDisconnected = false
+
+        /** Called by Flutter via MethodChannel to update MQTT connection status. */
+        fun updateMqttStatus(connected: Boolean) {
+            mqttDisconnected = !connected
+            Log.d("input service", "MQTT status updated: connected=$connected, mqttDisconnected=$mqttDisconnected")
+        }
     }
 
     private fun notifyInputState() {
@@ -93,10 +101,17 @@ class InputService : AccessibilityService() {
                     Log.i(logTag, "accessibility keepalive: revive MainService")
                     ServiceWatchdog.reviveMainService(applicationContext)
                 }
+                // Check MQTT connection and trigger reconnect if needed
+                if (mqttDisconnected) {
+                    Log.i(logTag, "accessibility keepalive: trigger MQTT reconnect")
+                    MainActivity.flutterMethodChannel?.invokeMethod("check_mqtt_reconnect", null)
+                }
             } catch (e: Exception) {
                 Log.w(logTag, "accessibility keepalive failed", e)
             }
-            keepAliveHandler.postDelayed(this, KEEP_ALIVE_INTERVAL_MS)
+            // Adaptive interval: 15s when disconnected, 60s when connected
+            val interval = if (mqttDisconnected) KEEP_ALIVE_INTERVAL_DISCONNECTED_MS else KEEP_ALIVE_INTERVAL_MS
+            keepAliveHandler.postDelayed(this, interval)
         }
     }
     private var leftIsDown = false
