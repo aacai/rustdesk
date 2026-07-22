@@ -268,20 +268,6 @@
 
 回执 `data`：合并本地版本 + `sys/version` 内容 + `needUpdate: bool`。
 
-```json
-{
-  "v": 1,
-  "requestId": "r2",
-  "deviceId": "a1b2c3d4e5f6g7h8",
-  "action": "open_download",
-  "params": {
-    "url": "https://example.com/rustdesk-1.4.10.apk"
-  }
-}
-```
-
-`url` 可省略：省略则使用 `sys/version.downloadUrl`。
-
 ---
 
 ### 6.3 临时免密授权（核心）
@@ -528,7 +514,7 @@
 
 ### 7.4 「检查更新」
 
-读 retained `rd/v1/sys/version`；要对某台设备打开浏览器下载则发 `open_download`（带 `deviceId`）。
+读 retained `rd/v1/sys/version`；要主动查询某台设备更新状态可发 `get_update_info`（带 `deviceId`）。
 
 ---
 
@@ -566,19 +552,9 @@
 
 ---
 
-## 10. 实现分期（设备端）
+## 10. 快速联调样例
 
-| 阶段 | 内容 |
-|---|---|
-| **P0** | 固定 topic、`deviceId` 在参数、`heartbeat` 10s、ping/status/revive、sys/version、open_download |
-| **P1** | `set_policy`/`get_policy`（含 heartbeat 开关）、grant/revoke/list、自动接听与静默文件 |
-| **P2** | 事件完善、去重限流、与设置页双向同步 |
-
----
-
-## 11. 快速联调样例
-
-### 11.1 先看有哪些设备
+### 10.1 先看有哪些设备
 
 订阅：`rd/v1/up`（`type: heartbeat`）  
 大约每 10 秒会收到：
@@ -595,7 +571,7 @@
 }
 ```
 
-### 11.2 对某台设备 ping
+### 10.2 对某台设备 ping
 
 Publish → `rd/v1/cmd`：
 
@@ -625,7 +601,7 @@ Publish → `rd/v1/cmd`：
 }
 ```
 
-### 11.3 授权 2 小时
+### 10.3 授权 2 小时
 
 ```json
 {
@@ -637,7 +613,7 @@ Publish → `rd/v1/cmd`：
 }
 ```
 
-### 11.4 开齐家庭策略（含心跳）
+### 10.4 开齐家庭策略（含心跳）
 
 ```json
 {
@@ -645,15 +621,15 @@ Publish → `rd/v1/cmd`：
   "requestId": "3",
   "deviceId": "a1b2c3d4e5f6g7h8",
   "action": "set_policy",
-      "params": {
-        "autoAcceptIncoming": true,
+  "params": {
+    "autoAcceptIncoming": true,
     "autoAnswerVoiceCall": true,
     "heartbeatEnabled": true
   }
 }
 ```
 
-### 11.5 远程改 ID/Relay 服务器
+### 10.5 远程改 ID/Relay 服务器
 
 ```json
 {
@@ -673,54 +649,7 @@ Publish → `rd/v1/cmd`：
 
 ---
 
-## 12. 变更记录
-
-| 版本 | 日期 | 说明 |
-|---|---|---|
-| 1.0.0 | 2026-07-21 | 首版：topic 含 deviceId、授权、策略、版本下载 |
-| 1.1.0 | 2026-07-21 | **Topic 全部固定**；`deviceId` 改到消息参数；新增 10s `heartbeat`（可关，默认开） |
-| 1.2.0 | 2026-07-21 | 新增 `set_network`/`get_network`；`grant_access` 连接层静默接听 |
-| 1.3.0 | 2026-07-22 | Flutter 层 MQTT 实现（mqtt_manager.dart）；新增 `autoAllowAny` 策略；接入 `serverModel.applyFamilyMqttPolicy()`；删除 Kotlin MQTT 层 |
-| 1.3.1 | 2026-07-22 | 精简协议：删 session 内冗余字段（silentFileTransfer、enableFileTransfer、enableKeyboard 等），授权后直接可用；删 denyLanDiscovery、set_network/get_network（配置内置）；合并 5 topic 为 3 |
-| 1.4.0 | 2026-07-22 | 新增 `set_config`/`get_config`：MQTT 远程读写 ID/Relay 服务器、`relay-server`、`api-server`、`key`；校验失败回 400 |
-| 1.5.0 | 2026-07-22 | 精简授权：`grant_access` 删除 `permissions` 细粒度权限（连接即全功能），改为 `controllerId` + `ip` 免密；删除策略 `autoAllowAny`（仅保留 `autoAcceptIncoming`） |
-
----
-
-## 13. 设备端实现状态（Android）
-
-> MQTT 在 Flutter 层实现（`flutter/lib/common/mqtt_manager.dart`），通过 FFI 读写 Rust 本地选项，通过 MethodChannel 控制 Kotlin（ServiceWatchdog 保活等）。连接参数打进了 APK，无需用户配置。
-
-| 能力 | 状态 | 代码 |
-|---|---|---|
-| 固定 topic `rd/v1/*` | ✅ Flutter MQTT | `mqtt_manager.dart` |
-| TLS 连接 CA 证书 | ✅ Flutter assets | `assets/emqxsl-ca.crt` |
-| 10s heartbeat + 开关 | ✅ 已落地 | `MqttCoordinator` → `MqttManager.startHeartbeat()` |
-| 命令分发 (ping/status/policy) | ✅ 已落地 | `MqttManager._handleBuiltIn()` |
-| set_policy / get_policy | ✅ 已落地 | → `_MqttFfiDelegate.applyPolicy()` → FFI 选项 + `serverModel.applyFamilyMqttPolicy()` |
-| set_config / get_config | ✅ 已落地 | → `_MqttFfiDelegate.applyConfig()`/`getConfig()` → `bind.mainSetOption`/`mainGetOptionSync`（`custom-rendezvous-server`/`relay-server`/`api-server`/`key`） |
-
-| 自动允许被控 | ✅ 已落地 | `familyAutoAcceptIncoming` → 改 approve mode |
-
-| ServiceWatchdog 保活 | ✅ 已落地 | `MainActivity.kt` → `SET_FAMILY_POLICY` MethodChannel |
-| MQTT 断开重连 | ✅ 已落地 | 指数退避重试（2s~120s） |
-| grant / revoke / list | ✅ 已落地 | `grant_access` 收 `controllerId`+`ip` 即加入免密白名单；`revoke_access`/`revoke_all_access`/`list_grants` 同步实现；`loginRequest` 命中白名单静默接受 |
-| get_update_info | ✅ 已落地 | `MqttManager` → `_cachedSysVersion` + `delegate.appVersion` |
-| open_download | ⬜ 规划 | 依赖 retained `rd/v1/sys/version`，尚未有处理分支 |
-
-### 已落地的集成接缝（双向同步基础）
-
-本地存储为唯一事实来源：
-
-- 「家庭监控」设置页（`flutter/lib/mobile/pages/settings_page.dart`）监听 `familyMonitorChanged` 通知，收到外部变更时实时刷新对应开关；不在该页面时本地存储已更新，回到前台也会同步最新值。
-- MQTT 连接层实现后，收到 `set_policy` 等指令应调用 `mainSetLocalBoolOptionAndNotify`（`flutter/lib/common.dart`）写入本地选项并触发上述刷新。
-- MQTT 连接参数按文档第 2 节内置，不在 UI 中暴露。
-
-监控端联调（待实现）：订阅 `rd/v1/up` → 抄 `deviceId` → 往 `rd/v1/cmd` 发指令 → 等 `rd/v1/up`（`type: ack`）。
-
----
-
-## 14. 授权后不需要二次确认的功能
+## 11. 授权后不需要二次确认的功能
 
 一旦 `autoAcceptIncoming` 授权通过，session 建立后以下功能可直接使用，不需要对端再次确认：
 
