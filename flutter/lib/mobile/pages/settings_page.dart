@@ -1421,9 +1421,9 @@ class __FamilyMonitorPageState extends State<_FamilyMonitorPage>
   bool _autoAnswerVoice = false;
   bool _denyLanDiscovery = false;
   bool _watchdogEnabled = false;
-  bool _udpPunch = false;
-  bool _ipv6Punch = false;
-  bool _directAccess = false;
+  bool _blackScreenRunning = false;
+  bool _shizukuInstalled = false;
+  bool _adbScreenOff = false;
 
   @override
   void initState() {
@@ -1431,6 +1431,18 @@ class __FamilyMonitorPageState extends State<_FamilyMonitorPage>
     _readStorage();
     familyMonitorChanged.addListener(_onChanged);
     WidgetsBinding.instance.addObserver(this);
+    _checkScreenOffStatus();
+  }
+
+  void _checkScreenOffStatus() async {
+    final blackRunning = await gFFI.invokeMethod(AndroidChannel.kIsBlackScreenRunning);
+    final shizukuInstalled = await gFFI.invokeMethod(AndroidChannel.kIsShizukuInstalled);
+    if (mounted) {
+      setState(() {
+        _blackScreenRunning = blackRunning == true;
+        _shizukuInstalled = shizukuInstalled == true;
+      });
+    }
   }
 
   @override
@@ -1451,9 +1463,6 @@ class __FamilyMonitorPageState extends State<_FamilyMonitorPage>
     _autoAnswerVoice = mainGetLocalBoolOptionSync(kOptionMqttAutoAnswerVoice);
     _denyLanDiscovery = mainGetLocalBoolOptionSync(kOptionMqttDenyLanDiscovery);
     _watchdogEnabled = mainGetLocalBoolOptionSync(kOptionMqttWatchdog);
-    _udpPunch = mainGetLocalBoolOptionSync(kOptionEnableUdpPunch);
-    _ipv6Punch = mainGetLocalBoolOptionSync(kOptionEnableIpv6Punch);
-    _directAccess = bind.mainGetLocalOption(key: kOptionDirectServer) == 'Y';
   }
 
   void _onChanged() {
@@ -1498,6 +1507,25 @@ class __FamilyMonitorPageState extends State<_FamilyMonitorPage>
             ],
           );
         },
+      ),
+    );
+  }
+
+  SettingsTile _batteryOptimizationTile() {
+    return SettingsTile(
+      title: const Text('电池优化'),
+      description: const Text('关闭电池优化以保持 MQTT 后台连接'),
+      trailing: ElevatedButton(
+        onPressed: () async {
+          final ignored = await gFFI.invokeMethod(
+              AndroidChannel.kIsBatteryOptimizationIgnored);
+          if (ignored == true) {
+            showToast('已关闭电池优化');
+            return;
+          }
+          await gFFI.invokeMethod(AndroidChannel.kRequestBatteryOptimization);
+        },
+        child: const Text('设置'),
       ),
     );
   }
@@ -1595,6 +1623,7 @@ class __FamilyMonitorPageState extends State<_FamilyMonitorPage>
               value: Text(MqttCoordinator.instance.deviceId),
             ),
             _mqttConnectionTile(),
+            if (isAndroid) _batteryOptimizationTile(),
             _sendCheckUpdateTile(),
             _getPolicyTile(),
           ],
@@ -1609,14 +1638,93 @@ class __FamilyMonitorPageState extends State<_FamilyMonitorPage>
             _switchTile('看门狗', _watchdogEnabled, kOptionMqttWatchdog),
           ],
         ),
-        SettingsSection(
-          title: const Text('网络'),
-          tiles: [
-            _switchTile('启用 UDP 打洞', _udpPunch, kOptionEnableUdpPunch),
-            _switchTile('启用 IPv6 P2P', _ipv6Punch, kOptionEnableIpv6Punch),
-            _switchTile('允许 IP 直接访问', _directAccess, kOptionDirectServer),
-          ],
-        ),
+        if (isAndroid)
+          SettingsSection(
+            title: const Text('息屏模式'),
+            tiles: [
+              SettingsTile.switchTile(
+                title: const Text('悬浮窗黑屏'),
+                description: const Text('显示全屏黑屏，双击或长按退出'),
+                initialValue: _blackScreenRunning,
+                onToggle: (v) async {
+                  if (v) {
+                    // Show confirmation dialog
+                    final confirm = await showDialog<bool>(
+                      context: context,
+                      builder: (context) => AlertDialog(
+                        title: const Text('确认'),
+                        content: const Text('确定开启黑屏模式？\n双击或长按 3 秒退出'),
+                        actions: [
+                          TextButton(
+                            onPressed: () => Navigator.pop(context, false),
+                            child: const Text('取消'),
+                          ),
+                          TextButton(
+                            onPressed: () => Navigator.pop(context, true),
+                            child: const Text('确定'),
+                          ),
+                        ],
+                      ),
+                    );
+                    if (confirm != true) return;
+
+                    // Check and request overlay permission
+                    if (!await AndroidPermissionManager.check(kSystemAlertWindow)) {
+                      await AndroidPermissionManager.request(kSystemAlertWindow);
+                      if (!await AndroidPermissionManager.check(kSystemAlertWindow)) {
+                        return;
+                      }
+                    }
+                    final started = await gFFI.invokeMethod(AndroidChannel.kStartBlackScreen);
+                    if (started != true) {
+                      return;
+                    }
+                  } else {
+                    await gFFI.invokeMethod(AndroidChannel.kStopBlackScreen);
+                  }
+                  final running = await gFFI.invokeMethod(AndroidChannel.kIsBlackScreenRunning);
+                  if (mounted) {
+                    setState(() => _blackScreenRunning = running == true);
+                  }
+                },
+              ),
+              SettingsTile.navigation(
+                title: const Text('ADB 黑屏'),
+                description: const Text('显示 ADB 命令，手动执行关闭屏幕'),
+                onPressed: (context) async {
+                  await gFFI.invokeMethod(AndroidChannel.kCopyDisplayToggleDex);
+
+                  showDialog(
+                    context: context,
+                    builder: (context) => AlertDialog(
+                      title: const Text('ADB 命令'),
+                      content: const SingleChildScrollView(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Text('关闭屏幕：'),
+                            SelectableText('adb shell CLASSPATH=/storage/emulated/0/DisplayToggle.dex app_process / DisplayToggle 0',
+                                style: TextStyle(fontFamily: 'monospace')),
+                            SizedBox(height: 12),
+                            Text('开启屏幕：'),
+                            SelectableText('adb shell CLASSPATH=/storage/emulated/0/DisplayToggle.dex app_process / DisplayToggle 2',
+                                style: TextStyle(fontFamily: 'monospace')),
+                          ],
+                        ),
+                      ),
+                      actions: [
+                        TextButton(
+                          onPressed: () => Navigator.pop(context),
+                          child: const Text('关闭'),
+                        ),
+                      ],
+                    ),
+                  );
+                },
+              ),
+            ],
+          ),
       ]),
     );
   }
