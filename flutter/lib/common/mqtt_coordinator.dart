@@ -45,8 +45,11 @@ class MqttCoordinator {
 
   bool get controllerConnected => _manager?.isConnected ?? false;
   Stream<bool> get onControllerConnection => _connectionController.stream;
-  Stream<Map<String, dynamic>> get onControllerUpMessage =>
-      _manager?.onUpMessage ?? const Stream.empty();
+
+  // Dedicated relay controller so subscribers always get messages,
+  // even if they subscribed before _manager was created.
+  final _upMsgRelay = StreamController<Map<String, dynamic>>.broadcast();
+  Stream<Map<String, dynamic>> get onControllerUpMessage => _upMsgRelay.stream;
 
   /// 在线设备列表，由 `rd/v1/up` 心跳 / 事件维护（内存态，90s 无更新即过期）。
   /// 单例常驻，任何页面 / 无页面打开时都可读、可监听。
@@ -62,9 +65,12 @@ class MqttCoordinator {
   Stream<void> get onDevicesChanged => _devicesChanged.stream;
 
   /// Publish a command envelope to the command topic from the control side.
-  void publishCmd(
+  /// Returns `true` if the command was published (MQTT connected), `false` otherwise.
+  bool publishCmd(
       String deviceId, String action, Map<String, dynamic> params) {
-    _manager?.publishCmd({
+    final mgr = _manager;
+    if (mgr == null || !mgr.isConnected) return false;
+    mgr.publishCmd({
       'v': 1,
       'requestId':
           'c-${DateTime.now().millisecondsSinceEpoch}-${DateTime.now().microsecond}',
@@ -74,6 +80,7 @@ class MqttCoordinator {
       'expireAt': DateTime.now().millisecondsSinceEpoch + 120000,
       'params': params,
     });
+    return true;
   }
 
   /// Publish a check-update request (get_update_info) to the command topic.
@@ -297,8 +304,10 @@ class MqttCoordinator {
     _manager!.onUpMessage.listen(_onUpMessage);
   }
 
-  /// 单例内部始终消费上行消息：按 deviceId 维护在线设备快照。
+  /// 单例内部始终消费上行消息：按 deviceId 维护在线设备快照，并转发给外部订阅者。
   void _onUpMessage(Map<String, dynamic> msg) {
+    // Relay to external consumers (e.g. MqttSendPage)
+    _upMsgRelay.add(msg);
     final id = msg['deviceId']?.toString();
     if (id == null || id.isEmpty) return;
     final now = DateTime.now().millisecondsSinceEpoch;

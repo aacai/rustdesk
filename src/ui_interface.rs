@@ -977,12 +977,34 @@ pub fn video_save_directory(root: bool) -> String {
         return dir.to_owned();
     }
     #[cfg(any(target_os = "android", target_os = "ios"))]
-    if let Ok(home) = config::APP_HOME_DIR.read() {
-        let mut path = home.to_owned();
-        path.push_str(format!("/{appname}/ScreenRecord").as_str());
-        let dir = try_create(&std::path::Path::new(&path));
-        if !dir.is_empty() {
-            return dir;
+    {
+        #[cfg(target_os = "android")]
+        {
+            // Try Download directory first (works with MANAGE_EXTERNAL_STORAGE or pre-Android 11)
+            let download_path = format!("/storage/emulated/0/Download/{appname}/ScreenRecord");
+            let dir = try_create(&std::path::Path::new(&download_path));
+            if !dir.is_empty() {
+                return dir;
+            }
+            // Fallback: use APP_HOME_DIR when Download is not writable
+            // (e.g. Android 11+ without MANAGE_EXTERNAL_STORAGE)
+            if let Ok(home) = config::APP_HOME_DIR.read() {
+                let mut path = home.to_owned();
+                path.push_str(format!("/{appname}/ScreenRecord").as_str());
+                let dir = try_create(&std::path::Path::new(&path));
+                if !dir.is_empty() {
+                    return dir;
+                }
+            }
+        }
+        #[cfg(not(target_os = "android"))]
+        if let Ok(home) = config::APP_HOME_DIR.read() {
+            let mut path = home.to_owned();
+            path.push_str(format!("/{appname}/ScreenRecord").as_str());
+            let dir = try_create(&std::path::Path::new(&path));
+            if !dir.is_empty() {
+                return dir;
+            }
         }
     }
 
