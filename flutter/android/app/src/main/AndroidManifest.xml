@@ -11,6 +11,7 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
@@ -33,7 +34,8 @@
         android:label="@string/app_name"
         android:requestLegacyExternalStorage="true"
         android:roundIcon="@mipmap/ic_launcher"
-        android:supportsRtl="true">
+        android:supportsRtl="true"
+        tools:overrideLibrary="rikka.shizuku.provider">
 
         <receiver
             android:name=".BootReceiver"
@@ -112,6 +114,15 @@
         <service
             android:name=".FloatingWindowService"
             android:enabled="true" />
+
+        <service
+            android:name=".MqttForegroundService"
+            android:enabled="true"
+            android:foregroundServiceType="dataSync" />
+
+        <service
+            android:name=".BlackScreenService"
+            android:exported="false" />
 
         <!--
  Don't delete the meta-data below.

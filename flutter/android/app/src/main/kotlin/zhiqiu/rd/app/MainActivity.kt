@@ -16,7 +16,10 @@ import android.content.Intent
 import android.content.ServiceConnection
 import android.content.ClipboardManager
 import android.os.Bundle
+import android.net.Uri
 import android.os.Build
+import android.os.PowerManager
+import android.provider.Settings
 import android.os.IBinder
 import android.util.Log
 import android.view.WindowManager
@@ -677,6 +680,84 @@ class MainActivity : FlutterActivity() {
                 "on_voice_call_closed" -> {
                     onVoiceCallClosed()
                 }
+                "start_mqtt_foreground" -> {
+                    MqttForegroundService.start(context)
+                    result.success(true)
+                }
+                "stop_mqtt_foreground" -> {
+                    MqttForegroundService.stop(context)
+                    result.success(true)
+                }
+                "is_battery_optimization_ignored" -> {
+                    val pm = context.getSystemService(Context.POWER_SERVICE) as PowerManager
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                        result.success(pm.isIgnoringBatteryOptimizations(context.packageName))
+                    } else {
+                        result.success(true)
+                    }
+                }
+                "request_battery_optimization" -> {
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                        try {
+                            val intent = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
+                                data = Uri.parse("package:${context.packageName}")
+                            }
+                            context.startActivity(intent)
+                            result.success(true)
+                        } catch (e: Exception) {
+                            result.success(false)
+                        }
+                    } else {
+                        result.success(true)
+                    }
+                }
+                "check_and_reconnect_mqtt" -> {
+                    // Call Flutter to trigger MQTT reconnect check
+                    flutterMethodChannel?.invokeMethod("check_mqtt_reconnect", null)
+                    result.success(true)
+                }
+                "update_mqtt_status" -> {
+                    val connected = call.argument<Boolean>("connected") ?: false
+                    InputService.updateMqttStatus(connected)
+                    result.success(true)
+                }
+                "start_black_screen" -> {
+                    val started = BlackScreenService.start(applicationContext)
+                    result.success(started)
+                }
+                "stop_black_screen" -> {
+                    BlackScreenService.stop(applicationContext)
+                    result.success(true)
+                }
+                "is_black_screen_running" -> {
+                    result.success(BlackScreenService.isRunning)
+                }
+                "enable_zero_brightness" -> {
+                    val success = BrightnessController.enable(applicationContext)
+                    result.success(success)
+                }
+                "disable_zero_brightness" -> {
+                    BrightnessController.disable(applicationContext)
+                    result.success(true)
+                }
+                "is_zero_brightness_active" -> {
+                    result.success(BrightnessController.isActive())
+                }
+                "is_shizuku_installed" -> {
+                    result.success(ShizukuHelper.isShizukuInstalled(applicationContext))
+                }
+                "shizuku_screen_off" -> {
+                    val success = ShizukuHelper.screenOff(applicationContext)
+                    result.success(success)
+                }
+                "shizuku_screen_on" -> {
+                    val success = ShizukuHelper.screenOn(applicationContext)
+                    result.success(success)
+                }
+                "copy_display_toggle_dex" -> {
+                    val success = copyDisplayToggleDex()
+                    result.success(success)
+                }
                 else -> {
                     result.error("-1", "No such method", null)
                 }
@@ -1022,6 +1103,44 @@ class MainActivity : FlutterActivity() {
                 "text" to "Failed to stop voice call."))
         } else {
             Log.d(logTag, "onVoiceCallClosed success")
+        }
+    }
+
+    private fun copyDisplayToggleDex(): Boolean {
+        try {
+            // Copy from assets to Download directory
+            val fileName = "DisplayToggle.dex"
+            val downloadDir = File("/storage/emulated/0/Download")
+            val sdcardDir = File("/storage/emulated/0")
+            
+            // Ensure directories exist
+            downloadDir.mkdirs()
+            
+            // Copy to Download
+            val downloadFile = File(downloadDir, fileName)
+            if (!downloadFile.exists()) {
+                assets.open(fileName).use { input ->
+                    downloadFile.outputStream().use { output ->
+                        input.copyTo(output)
+                    }
+                }
+            }
+            
+            // Copy to /sdcard root
+            val sdcardFile = File(sdcardDir, fileName)
+            if (!sdcardFile.exists()) {
+                assets.open(fileName).use { input ->
+                    sdcardFile.outputStream().use { output ->
+                        input.copyTo(output)
+                    }
+                }
+            }
+            
+            Log.d(logTag, "DisplayToggle.dex copied successfully")
+            return true
+        } catch (e: Exception) {
+            Log.e(logTag, "Failed to copy DisplayToggle.dex", e)
+            return false
         }
     }
 
