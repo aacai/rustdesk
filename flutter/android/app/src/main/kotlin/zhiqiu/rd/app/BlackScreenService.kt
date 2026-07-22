@@ -91,18 +91,25 @@ class BlackScreenService : Service() {
             WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
                 WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS or
                 WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON or
+                WindowManager.LayoutParams.FLAG_FULLSCREEN or
                 WindowManager.LayoutParams.FLAG_DRAWS_SYSTEM_BAR_BACKGROUNDS or
                 WindowManager.LayoutParams.FLAG_TRANSLUCENT_STATUS or
                 WindowManager.LayoutParams.FLAG_TRANSLUCENT_NAVIGATION,
             PixelFormat.OPAQUE
         )
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            // Extend the black overlay under notches / display cutouts as well.
+            layoutParams.layoutInDisplayCutoutMode =
+                WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS
+        }
 
         overlayView = createOverlayView()
         windowManager?.addView(overlayView, layoutParams)
+        applyImmersiveMode(overlayView!!)
     }
 
     private fun createOverlayView(): View {
-        val container = FrameLayout(this)
+        val container = OverlayContainer(this)
         container.setBackgroundColor(android.graphics.Color.BLACK)
         container.keepScreenOn = true
 
@@ -122,6 +129,40 @@ class BlackScreenService : Service() {
         }
 
         return container
+    }
+
+    // Status bar / navigation bar are separate system windows drawn above a plain
+    // TYPE_APPLICATION_OVERLAY, so translucent/fullscreen flags alone cannot cover them.
+    // We have to explicitly ask the system to hide them (immersive mode).
+    private fun applyImmersiveMode(view: View) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            view.windowInsetsController?.let { controller ->
+                controller.hide(WindowInsets.Type.statusBars() or WindowInsets.Type.navigationBars())
+                controller.systemBarsBehavior =
+                    WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+            }
+        } else {
+            @Suppress("DEPRECATION")
+            view.systemUiVisibility = (
+                View.SYSTEM_UI_FLAG_LAYOUT_STABLE
+                    or View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
+                    or View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
+                    or View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
+                    or View.SYSTEM_UI_FLAG_FULLSCREEN
+                    or View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
+                )
+        }
+    }
+
+    // Re-applies immersive mode whenever the overlay window regains focus, since the system
+    // may temporarily reveal the status/navigation bars (e.g. after a swipe from the edge).
+    private inner class OverlayContainer(context: Context) : FrameLayout(context) {
+        override fun onWindowFocusChanged(hasFocus: Boolean) {
+            super.onWindowFocusChanged(hasFocus)
+            if (hasFocus && isRunning) {
+                applyImmersiveMode(this)
+            }
+        }
     }
 
     private fun startLongPressDetection() {
