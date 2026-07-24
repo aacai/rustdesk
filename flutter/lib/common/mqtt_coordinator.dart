@@ -143,6 +143,8 @@ class MqttCoordinator with WidgetsBindingObserver {
     _started = false;
     familyMonitorChanged.removeListener(_onPolicyChanged);
     _retryTimer?.cancel();
+    _configCheckTimer?.cancel();
+    _configCheckTimer = null;
     _manager?.disconnect();
     _manager = null;
   }
@@ -259,6 +261,8 @@ class MqttCoordinator with WidgetsBindingObserver {
       familyMonitorChanged.addListener(_onPolicyChanged);
       // Push current policy to Kotlin on startup
       _pushPolicyToNative();
+      // Start the periodic remote-config check (default once a day).
+      _restartConfigCheckTimer();
       _manager!.onConnectionChanged.listen((c) {
         _connectionController.add(c);
         if (c) {
@@ -288,7 +292,8 @@ class MqttCoordinator with WidgetsBindingObserver {
   }
 
   void _onPolicyChanged() {
-    // Sync heartbeat with MQTT
+    // Sync heartbeat with MQTT. Always restart when enabled so a changed
+    // heartbeat interval takes effect immediately.
     if (_manager != null && _manager!.isConnected) {
       final hbOn = mainGetLocalBoolOptionSync(kOptionMqttHeartbeat);
       if (hbOn) {
@@ -297,6 +302,8 @@ class MqttCoordinator with WidgetsBindingObserver {
         _manager!.stopHeartbeat();
       }
     }
+    // Rebuild the remote-config check timer with the latest interval.
+    _restartConfigCheckTimer();
     // Push to Kotlin (always, even if MQTT disconnected)
     _pushPolicyToNative();
   }
@@ -370,17 +377,106 @@ class MqttCoordinator with WidgetsBindingObserver {
   void _onUpMessage(Map<String, dynamic> msg) {
     // Relay to external consumers (e.g. MqttSendPage)
     _upMsgRelay.add(msg);
+    // Remote config lives in the retained rd/v1/sys/version payload; apply it
+    // in real time whenever it arrives / changes.
+    if (msg['topic'] == kTopicSysVersion) {
+      _maybeApplyRemoteConfig(msg);
+      return;
+    }
     final id = msg['deviceId']?.toString();
     if (id == null || id.isEmpty) return;
     final now = DateTime.now().millisecondsSinceEpoch;
     _devices[id] = {...msg, 'lastSeen': now};
     _devicesChanged.add(null);
   }
+
+  // ---------------------------------------- remote config (sys/version)
+
+  Timer? _configCheckTimer;
+  bool _applyingRemoteConfig = false;
+
+  /// Remote-config check interval in minutes (default one day to save power).
+  int get _configCheckIntervalMin {
+    final v = int.tryParse(
+        bind.mainGetLocalOption(key: kOptionMqttConfigCheckIntervalMin));
+    return (v == null || v <= 0) ? 1440 : v;
+  }
+
+  void _restartConfigCheckTimer() {
+    _configCheckTimer?.cancel();
+    _configCheckTimer = Timer.periodic(
+      Duration(minutes: _configCheckIntervalMin),
+      (_) => checkRemoteConfigNow(),
+    );
+  }
+
+  /// Check the (retained) remote config now and apply if it differs.
+  /// Called on settings-page open, on the periodic timer, and whenever a fresh
+  /// sys/version message arrives.
+  Future<void> checkRemoteConfigNow() async {
+    final cached = _manager?.cachedSysVersion;
+    if (cached != null) {
+      await _maybeApplyRemoteConfig(cached);
+    }
+    // If not cached yet, the broker pushes the retained message on
+    // (re)subscribe, which flows into _onUpMessage → _maybeApplyRemoteConfig.
+  }
+
+  /// Apply `config` from the sys/version payload when `not_equal_then_replace`
+  /// is true and any non-empty field differs from the local value.
+  Future<void> _maybeApplyRemoteConfig(Map<String, dynamic> json) async {
+    if (json['not_equal_then_replace'] != true) return;
+    final cfg = json['config'];
+    if (cfg is! Map) return;
+    if (_applyingRemoteConfig) return;
+
+    final delegate = _MqttFfiDelegate();
+    final local = delegate.getConfig();
+    String norm(dynamic v) {
+      final s = (v ?? '').toString().trim();
+      return s.endsWith('/') ? s.substring(0, s.length - 1) : s;
+    }
+
+    final fields = <String, dynamic>{
+      'idServer': cfg['idServer'],
+      'relayServer': cfg['relayServer'],
+      'apiServer': cfg['apiServer'],
+      'key': cfg['key'],
+    };
+    var diff = false;
+    fields.forEach((k, v) {
+      final want = norm(v);
+      if (want.isEmpty) return; // only compare non-empty remote fields
+      if (norm(local[k]) != want) diff = true;
+    });
+    if (!diff) return;
+
+    _applyingRemoteConfig = true;
+    try {
+      // Forced replace: skip reachability validation so the config is applied
+      // even when the target server is momentarily offline.
+      final err = await delegate.applyConfig(fields, validate: false);
+      if (err != null) {
+        debugPrint('[MqttCoordinator] remote config apply failed: $err');
+      } else {
+        debugPrint('[MqttCoordinator] remote config applied');
+      }
+    } finally {
+      _applyingRemoteConfig = false;
+    }
+  }
 }
 
 /// Delegate that bridges MQTT events to FFI local options.
 class _MqttFfiDelegate extends MqttDelegate {
   _MqttFfiDelegate();
+
+  @override
+  int? heartbeatIntervalSec() {
+    final v = int.tryParse(
+        bind.mainGetLocalOption(key: kOptionMqttHeartbeatIntervalSec));
+    return (v == null || v <= 0) ? null : v;
+  }
 
   @override
   String? buildHeartbeatPayload() {
@@ -393,6 +489,9 @@ class _MqttFfiDelegate extends MqttDelegate {
       'rustdeskId': id,
       'ts': DateTime.now().millisecondsSinceEpoch,
       'appVersion': '1.4.9',
+      // Advertise the interval so the monitor side can size its offline
+      // timeout (max(90s, 2.5 × interval)).
+      'hbIntervalSec': heartbeatIntervalSec() ?? 10,
     });
   }
 
@@ -439,7 +538,8 @@ class _MqttFfiDelegate extends MqttDelegate {
   }
 
   @override
-  Future<String?> applyConfig(Map<String, dynamic> params) async {
+  Future<String?> applyConfig(Map<String, dynamic> params,
+      {bool validate = true}) async {
     String trimOrNull(dynamic v) {
       if (v == null) return '';
       final s = v.toString().trim();
@@ -451,22 +551,28 @@ class _MqttFfiDelegate extends MqttDelegate {
     final api = trimOrNull(params['apiServer']);
     final key = (params['key']?.toString() ?? '').trim();
 
-    if (id.isNotEmpty) {
-      final err = await bind.mainTestIfValidServer(server: id, testWithProxy: true);
-      if (err.isNotEmpty) return 'idServer: $err';
-    }
-    if (relay.isNotEmpty) {
-      final err = await bind.mainTestIfValidServer(server: relay, testWithProxy: true);
-      if (err.isNotEmpty) return 'relayServer: $err';
-    }
-    if (api.isNotEmpty &&
-        !api.startsWith('http://') &&
-        !api.startsWith('https://')) {
-      return 'apiServer: invalid_http';
+    if (validate) {
+      if (id.isNotEmpty) {
+        final err =
+            await bind.mainTestIfValidServer(server: id, testWithProxy: true);
+        if (err.isNotEmpty) return 'idServer: $err';
+      }
+      if (relay.isNotEmpty) {
+        final err = await bind.mainTestIfValidServer(
+            server: relay, testWithProxy: true);
+        if (err.isNotEmpty) return 'relayServer: $err';
+      }
+      if (api.isNotEmpty &&
+          !api.startsWith('http://') &&
+          !api.startsWith('https://')) {
+        return 'apiServer: invalid_http';
+      }
     }
 
-    if (id.isNotEmpty) {
-      await bind.mainSetOption(key: 'custom-rendezvous-server', value: id);
+    // Write non-restart-triggering options first so they are already persisted
+    // before custom-rendezvous-server forces a RendezvousMediator restart.
+    if (key.isNotEmpty) {
+      await bind.mainSetOption(key: 'key', value: key);
     }
     if (relay.isNotEmpty) {
       await bind.mainSetOption(key: 'relay-server', value: relay);
@@ -474,8 +580,14 @@ class _MqttFfiDelegate extends MqttDelegate {
     if (api.isNotEmpty) {
       await bind.mainSetOption(key: 'api-server', value: api);
     }
-    if (key.isNotEmpty) {
-      await bind.mainSetOption(key: 'key', value: key);
+    // Write id last to trigger a restart that picks up the fresh key/relay.
+    if (id.isNotEmpty) {
+      await bind.mainSetOption(key: 'custom-rendezvous-server', value: id);
+    } else if (key.isNotEmpty || relay.isNotEmpty) {
+      // No id change, but key/relay changed: force a restart by rewriting the
+      // current custom-rendezvous-server value (same value still restarts).
+      final cur = bind.mainGetOptionSync(key: 'custom-rendezvous-server');
+      await bind.mainSetOption(key: 'custom-rendezvous-server', value: cur);
     }
     return null;
   }
