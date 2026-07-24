@@ -157,9 +157,9 @@
 
 ### 5.4 心跳上报（`rd/v1/up`，`type: heartbeat`）— 发现设备用
 
-- 周期：**默认每 10 秒** 发一次（MQTT 连上后立即先发 1 次）
+- 周期：**默认每 10 秒** 发一次（MQTT 连上后立即先发 1 次），可在设置页调整（见 §6.2 A.2）
 - QoS：1
-- retain：**false**（靠周期刷新列表；超过约 30 秒无心跳可视为离线）
+- retain：**false**（靠周期刷新列表；超时 = `max(90s, 2.5 × hbIntervalSec)` 无心跳可视为离线）
 - 开关：设置页 / `set_policy.heartbeatEnabled`，**默认 `true`**
 
 ```json
@@ -170,6 +170,7 @@
   "ts": 1710000000000,
   "ip": "192.168.1.23",
   "appVersion": "1.4.9",
+  "hbIntervalSec": 10,
   "mainServiceRunning": true,
   "battery": 87,
   "charging": false
@@ -183,10 +184,11 @@
 | `ip` | 尽量 | 当前 IP；获取失败可 `""` 或省略 |
 | `rustdeskId` | 尽量 | 有则带上，方便你直接发起连接 |
 | `appVersion` | 建议 | APK 版本名 |
+| `hbIntervalSec` | 建议 | 当前心跳周期（秒）；监控端据此算离线超时 |
 | `mainServiceRunning` | 建议 | 被控服务是否在跑 |
 | `battery` / `charging` | 可选 | 老人机电量 |
 
-监控端列表逻辑建议：收到心跳 → upsert；`now - ts > 30s` → 标离线。
+监控端列表逻辑建议：收到心跳 → upsert；`now - ts > max(90s, 2.5 × hbIntervalSec)` → 标离线。
 
 ---
 
@@ -242,11 +244,36 @@
   "changelog": "保活与家庭监控增强",
   "forceUpdate": false,
   "minSupportedVersion": "1.4.0",
-  "ts": 1710000000000
+  "ts": 1710000000000,
+  "not_equal_then_replace": true,
+  "config": {
+    "idServer": "id.example.com",
+    "relayServer": "relay.example.com",
+    "apiServer": "https://api.example.com",
+    "key": "xxxxxxxxxxxxxxxx"
+  }
 }
 ```
 
 > 该消息由**你的发布流程 / 监控端**写入 Broker（retain）；设备与客户端都只读。
+
+#### A.1 远程配置强制下发（`not_equal_then_replace` + `config`）
+
+当 `not_equal_then_replace == true` 且 `config` 非空时，设备会把 `config` 里**每个非空字段**与本地对应配置逐项对比，只要有一项不同就用远端值覆盖本地（`idServer`→`custom-rendezvous-server`、`relayServer`→`relay-server`、`apiServer`→`api-server`、`key`→`key`）。空字段忽略、不参与对比也不覆盖。
+
+- 应用时**跳过服务器连通性校验**，即使目标服务器暂时离线也会写入。
+- 写入顺序：先写 key / relay / api，最后写 `custom-rendezvous-server` 触发 `RendezvousMediator` 重启，确保新 key/relay 立即生效；若本次未改 id 但改了 key/relay，会对 `custom-rendezvous-server` 原值重写一次强制重启。
+
+**检查时机（三处）**：
+1. 设备在线时收到 / broker 推送 retained `sys/version` → 实时对比应用；
+2. 打开「家庭监控」设置页时主动检查一次；
+3. 周期定时器（默认一天一次，省电），到点做本地对比（防用户手动改回）。
+
+**检查频率**：可在「家庭监控 → 策略设置 → 配置检查频率」设置（1 小时 / 6 小时 / 12 小时 / 1 天，默认 1 天），本地选项 `mqtt-config-check-interval-min`，改后立即生效。
+
+#### A.2 心跳周期设置
+
+心跳周期可在「家庭监控 → 策略设置 → 心跳周期」设置（10 秒 / 30 秒 / 1 分钟 / 5 分钟，默认 10 秒），本地选项 `mqtt-heartbeat-interval-sec`，改后立即重启心跳生效。心跳 payload 增加 `hbIntervalSec` 字段标示当前周期，**监控端判离线的超时应取 `max(90s, 2.5 × hbIntervalSec)`**，否则选大周期（如 5 分钟）会被误判离线。
 
 #### B. 设备查询并可选跳转下载
 
