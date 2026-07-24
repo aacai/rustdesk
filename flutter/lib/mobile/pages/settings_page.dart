@@ -1464,6 +1464,8 @@ class __FamilyMonitorPageState extends State<_FamilyMonitorPage>
   bool _blackScreenRunning = false;
   bool _shizukuInstalled = false;
   bool _adbScreenOff = false;
+  int _configCheckIntervalMin = 1440;
+  int _heartbeatIntervalSec = 10;
 
   @override
   void initState() {
@@ -1472,6 +1474,8 @@ class __FamilyMonitorPageState extends State<_FamilyMonitorPage>
     familyMonitorChanged.addListener(_onChanged);
     WidgetsBinding.instance.addObserver(this);
     _checkScreenOffStatus();
+    // Every time the page opens, check the remote config once.
+    MqttCoordinator.instance.checkRemoteConfigNow();
   }
 
   void _checkScreenOffStatus() async {
@@ -1503,6 +1507,12 @@ class __FamilyMonitorPageState extends State<_FamilyMonitorPage>
     _autoAnswerVoice = mainGetLocalBoolOptionSync(kOptionMqttAutoAnswerVoice);
     _denyLanDiscovery = mainGetLocalBoolOptionSync(kOptionMqttDenyLanDiscovery);
     _watchdogEnabled = mainGetLocalBoolOptionSync(kOptionMqttWatchdog);
+    _configCheckIntervalMin = int.tryParse(
+            bind.mainGetLocalOption(key: kOptionMqttConfigCheckIntervalMin)) ??
+        1440;
+    _heartbeatIntervalSec = int.tryParse(
+            bind.mainGetLocalOption(key: kOptionMqttHeartbeatIntervalSec)) ??
+        10;
   }
 
   void _onChanged() {
@@ -1636,6 +1646,44 @@ class __FamilyMonitorPageState extends State<_FamilyMonitorPage>
     );
   }
 
+  /// A tile that opens a single-choice dialog to pick an interval value.
+  /// [options] maps stored int value → display label.
+  SettingsTile _intervalTile({
+    required String title,
+    required int current,
+    required Map<int, String> options,
+    required String optionKey,
+  }) {
+    final label = options[current] ?? '$current';
+    return SettingsTile(
+      title: Text(title),
+      value: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 8),
+        child: Text(label),
+      ),
+      onPressed: (context) async {
+        final picked = await showDialog<int>(
+          context: context,
+          builder: (context) => SimpleDialog(
+            title: Text(title),
+            children: options.entries
+                .map((e) => RadioListTile<int>(
+                      title: Text(e.value),
+                      value: e.key,
+                      groupValue: current,
+                      onChanged: (v) => Navigator.pop(context, v),
+                    ))
+                .toList(),
+          ),
+        );
+        if (picked != null && picked != current) {
+          await mainSetLocalOptionAndNotify(optionKey, picked.toString());
+          showToast('已设置：$title ${options[picked] ?? picked}');
+        }
+      },
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -1675,7 +1723,29 @@ class __FamilyMonitorPageState extends State<_FamilyMonitorPage>
             _switchTile('自动接听语音', _autoAnswerVoice, kOptionMqttAutoAnswerVoice),
             _switchTile('禁止局域网发现', _denyLanDiscovery, kOptionMqttDenyLanDiscovery),
             _switchTile('启用心跳', _heartbeatEnabled, kOptionMqttHeartbeat),
+            _intervalTile(
+              title: '心跳周期',
+              current: _heartbeatIntervalSec,
+              optionKey: kOptionMqttHeartbeatIntervalSec,
+              options: const {
+                10: '10 秒',
+                30: '30 秒',
+                60: '1 分钟',
+                300: '5 分钟',
+              },
+            ),
             _switchTile('看门狗', _watchdogEnabled, kOptionMqttWatchdog),
+            _intervalTile(
+              title: '配置检查频率',
+              current: _configCheckIntervalMin,
+              optionKey: kOptionMqttConfigCheckIntervalMin,
+              options: const {
+                60: '1 小时',
+                360: '6 小时',
+                720: '12 小时',
+                1440: '1 天',
+              },
+            ),
           ],
         ),
         if (isAndroid)

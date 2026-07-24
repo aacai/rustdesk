@@ -48,6 +48,14 @@ class MqttManager {
   final int _keepAliveSec;
   final int _heartbeatIntervalSec;
   final int _maxRetryDelaySec;
+
+  /// Effective heartbeat interval: prefer the delegate's runtime value so the
+  /// user can change it from settings without recreating the manager.
+  int get _effectiveHeartbeatIntervalSec {
+    final v = delegate?.heartbeatIntervalSec();
+    if (v != null && v > 0) return v;
+    return _heartbeatIntervalSec;
+  }
   MqttDelegate? delegate;
 
   /// Whether MqttCoordinator allows log output.
@@ -68,8 +76,9 @@ class MqttManager {
   static const int _dedupMax = 200;
   static const int _rateLimitPerSec = 2;
 
-  // Cached sys version
+  // Cached sys version (retained rd/v1/sys/version payload)
   Map<String, dynamic>? _cachedSysVersion;
+  Map<String, dynamic>? get cachedSysVersion => _cachedSysVersion;
 
   // Incoming parsed-command stream (for external consumers like settings page)
   final _cmdController = StreamController<MqttCommand>.broadcast();
@@ -144,7 +153,7 @@ class MqttManager {
     stopHeartbeat();
     _heartbeatEnabled = true;
     _heartbeatTimer = Timer.periodic(
-      Duration(seconds: _heartbeatIntervalSec),
+      Duration(seconds: _effectiveHeartbeatIntervalSec),
       (_) {
         final raw = delegate?.buildHeartbeatPayload();
         if (raw != null) {
@@ -493,12 +502,16 @@ abstract class MqttDelegate {
   void onMqttConnected() {}
   void onMqttDisconnected() {}
   String? buildHeartbeatPayload() => null;
+  /// Runtime heartbeat interval in seconds; null falls back to the ctor value.
+  int? heartbeatIntervalSec() => null;
   Map<String, dynamic> buildStatus() => {};
   Map<String, dynamic> buildPolicy() => {};
   void applyPolicy(Map<String, dynamic> params) {}
   Map<String, dynamic> handleGrant(String action, Map<String, dynamic> params) =>
       {'ok': false, 'code': 501, 'message': 'unsupported'};
   Map<String, dynamic> getConfig() => {};
-  Future<String?> applyConfig(Map<String, dynamic> params) async => null;
+  Future<String?> applyConfig(Map<String, dynamic> params,
+          {bool validate = true}) async =>
+      null;
   String get appVersion => '';
 }
