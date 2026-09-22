@@ -2204,6 +2204,11 @@ class _DisplayState extends State<_Display> {
   Widget other(BuildContext context) {
     final children =
         otherDefaultSettings().map((e) => otherRow(e.$1, e.$2)).toList();
+    children.add(autoUnlockRemoteDesktopRow(
+      context: context,
+      onUpdated: () => setState(() {}),
+      leftMargin: _kCheckBoxLeftMargin,
+    ));
     return _Card(title: 'Other Default Options', children: children);
   }
 }

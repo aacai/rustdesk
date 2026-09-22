@@ -48,7 +48,7 @@ use hbb_common::{
     anyhow::{anyhow, Context},
     bail,
     config::{
-        self, use_ws, Config, LocalConfig, PeerConfig, PeerInfoSerde, Resolution,
+        self, use_ws, Config, LocalConfig, PeerConfig, PeerInfoSerde, Resolution, UserDefaultConfig,
         CONNECT_TIMEOUT, READ_TIMEOUT, RELAY_PORT, RENDEZVOUS_PORT, RENDEZVOUS_SERVERS,
     },
     futures::future::{select_ok, BoxFuture, FutureExt},
@@ -3034,10 +3034,19 @@ impl LoginConfigHandler {
         let a = !self.get_option("auto-login").is_empty();
         let p = self.get_option("os-password");
         if !p.is_empty() && l && a {
-            p
-        } else {
-            "".to_owned()
+            return p;
         }
+        // Independent global "Auto unlock remote" (does not require lock-after-session-end).
+        if !self.view_only.v {
+            let defaults = UserDefaultConfig::load();
+            if defaults.get(keys::OPTION_AUTO_UNLOCK_REMOTE) == "Y" {
+                let password = defaults.get(keys::OPTION_AUTO_UNLOCK_REMOTE_PASSWORD);
+                if !password.is_empty() {
+                    return password;
+                }
+            }
+        }
+        "".to_owned()
     }
 
     /// Load [`PeerConfig`].
