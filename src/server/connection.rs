@@ -3023,16 +3023,12 @@ impl Connection {
             // Family-monitor MQTT grant_access: whitelist controller RustDesk ID (TTL).
             if is_family_mqtt_granted(&lr.my_id) {
                 log::info!("family mqtt grant: auto-accept controller {}", lr.my_id);
-                if err_msg.is_empty() {
-                    #[cfg(target_os = "linux")]
-                    self.linux_headless_handle.wait_desktop_cm_ready().await;
-                    if !self.send_logon_response_and_keep_alive().await {
-                        return false;
-                    }
-                    self.try_start_cm(lr.my_id.clone(), lr.my_name.clone(), self.authorized);
-                } else {
-                    self.send_login_error(err_msg).await;
+                #[cfg(target_os = "linux")]
+                self.linux_headless_handle.wait_desktop_cm_ready().await;
+                if !self.send_logon_response_and_keep_alive().await {
+                    return false;
                 }
+                self.try_start_cm(lr.my_id.clone(), lr.my_name.clone(), self.authorized);
                 return true;
             }
 
