@@ -97,6 +97,10 @@ message Auth2FA {
 
 message ChatMessage { string text = 1; }
 
+// Bidirectional video-call signaling (WebRTC offer/answer/ICE), relayed as a
+// normal RustDesk session message between the two peers.
+message CallSignal { string data = 1; }
+
 message Features {
   bool privacy_mode = 1;
   bool terminal = 2;
@@ -867,6 +871,7 @@ message Misc {
     // is rebuilt, and held again, the next time it is shown, before any connection names it
     // by id again, so the shape just selected is always there to give.
     uint64 request_cursor_data = 39;
+    CallSignal call_signal = 40;
   }
 }
 

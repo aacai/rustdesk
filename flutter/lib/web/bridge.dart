@@ -548,6 +548,12 @@ class RustdeskImpl {
         () => js.context.callMethod('setByName', ['send_chat', text]));
   }
 
+  Future<void> sessionSendCallSignal(
+      {required UuidValue sessionId, required String data, dynamic hint}) {
+    return Future(
+        () => js.context.callMethod('setByName', ['send_call_signal', data]));
+  }
+
   Future<void> sessionPeerOption(
       {required UuidValue sessionId,
       required String name,
@@ -1431,6 +1437,11 @@ class RustdeskImpl {
   Future<void> cmSendChat(
       {required int connId, required String msg, dynamic hint}) {
     throw UnimplementedError("cmSendChat");
+  }
+
+  Future<void> cmSendCallSignal(
+      {required int connId, required String data, dynamic hint}) {
+    throw UnimplementedError("cmSendCallSignal");
   }
 
   Future<void> cmLoginRes(

@@ -19,6 +19,7 @@ object FFI {
     external fun startService()
     external fun onVideoFrameUpdate(buf: ByteBuffer)
     external fun onAudioFrameUpdate(buf: ByteBuffer)
+    external fun onCameraFrameUpdate(buf: ByteBuffer)
     external fun translateLocale(localeName: String, input: String): String
     external fun refreshScreen()
     external fun closeAllSessions()

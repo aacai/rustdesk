@@ -541,6 +541,7 @@ fn get_capturer_monitor(
     })
 }
 
+#[cfg(not(target_os = "android"))]
 fn get_capturer_camera(current: usize) -> ResultType<CapturerInfo> {
     let cameras = camera::Cameras::get_sync_cameras();
     let ncamera = cameras.len();
@@ -580,6 +581,24 @@ fn get_capturer_camera(current: usize) -> ResultType<CapturerInfo> {
         _capturer_privacy_mode_id: privacy_mode_id,
         capturer,
     });
+}
+
+#[cfg(target_os = "android")]
+fn get_capturer_camera(_current: usize) -> ResultType<CapturerInfo> {
+    let (w, h) = scrap::get_camera_size();
+    let capturer = scrap::Capturer::new_camera(scrap::Display::with_size(w, h))?;
+    let privacy_mode_id = get_privacy_mode_conn_id().unwrap_or(INVALID_PRIVACY_MODE_CONN_ID);
+    log::debug!("android camera capturer: width={w}, height={h}");
+    Ok(CapturerInfo {
+        origin: (0, 0),
+        width: w as usize,
+        height: h as usize,
+        ndisplay: 1,
+        current: 0,
+        privacy_mode_id,
+        _capturer_privacy_mode_id: privacy_mode_id,
+        capturer: Box::new(capturer),
+    })
 }
 fn get_capturer(
     source: VideoSource,
@@ -1373,9 +1392,7 @@ pub fn make_display_changed_msg(
         Some(d) => d,
         None => match source {
             VideoSource::Monitor => display_service::get_display_info(display_idx)?,
-            VideoSource::Camera => camera::Cameras::get_sync_cameras()
-                .get(display_idx)?
-                .clone(),
+            VideoSource::Camera => get_camera_display(display_idx)?,
         },
     };
     let mut misc = Misc::new();
@@ -1413,6 +1430,17 @@ pub fn make_display_changed_msg(
     let mut msg_out = Message::new();
     msg_out.set_misc(misc);
     Some(msg_out)
+}
+
+fn get_camera_display(idx: usize) -> Option<DisplayInfo> {
+    #[cfg(target_os = "android")]
+    {
+        scrap::get_camera_displays().into_iter().nth(idx)
+    }
+    #[cfg(not(target_os = "android"))]
+    {
+        camera::Cameras::get_sync_cameras().get(idx).cloned()
+    }
 }
 
 fn check_qos(
