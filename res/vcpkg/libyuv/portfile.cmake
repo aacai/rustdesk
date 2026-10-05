@@ -1,11 +1,10 @@
 vcpkg_check_linkage(ONLY_STATIC_LIBRARY)
 
-vcpkg_from_github(
+vcpkg_from_git(
     OUT_SOURCE_PATH SOURCE_PATH
-    REPO lemonkov/libyuv
+    URL https://chromium.googlesource.com/libyuv/libyuv
     REF 0faf8dd0e004520a61a603a4d2996d5ecc80dc3f
-    SHA512 53e7428589b43a69d927cfe309c23ec15d482ff0025d2ef51be0cb00905cfbaad277e2974e4768928bde835fa4ba8e4d1516ac58d8dcf36f7bae357a386101d1
-    HEAD_REF main
+    # Check https://chromium.googlesource.com/libyuv/libyuv/+/refs/heads/main/include/libyuv/version.h for a version!
     PATCHES
         fix-cmakelists.patch
 )
