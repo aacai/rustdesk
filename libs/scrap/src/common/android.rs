@@ -1,5 +1,6 @@
 use crate::android::ffi::*;
 use crate::{Frame, Pixfmt};
+use base::message_proto::{DisplayInfo, Resolution};
 use lazy_static::lazy_static;
 use serde_json::Value;
 use std::collections::HashMap;
@@ -12,6 +13,7 @@ lazy_static! {
 
 pub struct Capturer {
     display: Display,
+    camera: bool,
     rgba: Vec<u8>,
     saved_raw_data: Vec<u8>, // for faster compare and copy
 }
@@ -20,6 +22,17 @@ impl Capturer {
     pub fn new(display: Display) -> io::Result<Capturer> {
         Ok(Capturer {
             display,
+            camera: false,
+            rgba: Vec::new(),
+            saved_raw_data: Vec::new(),
+        })
+    }
+
+    // Capturer that pulls frames from the dedicated camera raw buffer.
+    pub fn new_camera(display: Display) -> io::Result<Capturer> {
+        Ok(Capturer {
+            display,
+            camera: true,
             rgba: Vec::new(),
             saved_raw_data: Vec::new(),
         })
@@ -36,7 +49,12 @@ impl Capturer {
 
 impl crate::TraitCapturer for Capturer {
     fn frame<'a>(&'a mut self, _timeout: Duration) -> io::Result<Frame<'a>> {
-        if get_video_raw(&mut self.rgba, &mut self.saved_raw_data).is_some() {
+        let taken = if self.camera {
+            get_camera_raw(&mut self.rgba, &mut self.saved_raw_data).is_some()
+        } else {
+            get_video_raw(&mut self.rgba, &mut self.saved_raw_data).is_some()
+        };
+        if taken {
             Ok(Frame::PixelBuffer(PixelBuffer::new(
                 &self.rgba,
                 self.width(),
@@ -166,6 +184,53 @@ impl Display {
             scale * scale
         }
     }
+
+    // Build a display with an explicit size, used for the camera video source on Android.
+    pub fn with_size(w: u16, h: u16) -> Display {
+        Display {
+            default: true,
+            rect: Rect { x: 0, y: 0, w, h },
+        }
+    }
+}
+
+pub fn get_camera_size() -> (u16, u16) {
+    const DEFAULT: (u16, u16) = (1280, 720);
+    if let Ok(res) = call_main_service_get_by_name("camera_size") {
+        if let Ok(json) = serde_json::from_str::<HashMap<String, Value>>(&res) {
+            if let (Some(Value::Number(w)), Some(Value::Number(h))) =
+                (json.get("width"), json.get("height"))
+            {
+                if let (Some(w), Some(h)) = (w.as_i64(), h.as_i64()) {
+                    if w > 0 && h > 0 {
+                        return (w as u16, h as u16);
+                    }
+                }
+            }
+        }
+    }
+    DEFAULT
+}
+
+pub fn get_camera_displays() -> Vec<DisplayInfo> {
+    let (w, h) = get_camera_size();
+    vec![DisplayInfo {
+        x: 0,
+        y: 0,
+        name: "Camera".to_string(),
+        width: w as i32,
+        height: h as i32,
+        online: true,
+        cursor_embedded: false,
+        scale: 1.0,
+        original_resolution: Some(Resolution {
+            width: w as i32,
+            height: h as i32,
+            ..Default::default()
+        })
+        .into(),
+        ..Default::default()
+    }]
 }
 
 fn get_size() -> Option<(u16, u16, u16)> {

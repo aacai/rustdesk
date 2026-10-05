@@ -1071,6 +1071,10 @@ impl InvokeUiSession for FlutterHandler {
         self.push_event::<&str>("on_voice_call_incoming", &[], &[]);
     }
 
+    fn on_call_signal(&self, data: String) {
+        let _res = self.push_event("call_signal", &[("data", data.as_str())], &[]);
+    }
+
     #[inline]
     fn get_rgba(&self, _display: usize) -> *const u8 {
         if let Some(rgba_data) = self.display_rgbas.read().unwrap().get(&_display) {
@@ -1550,6 +1554,13 @@ pub mod connection_manager {
                 log::debug!("call_main_service_set_by_name fail,{}", e);
             }
             self.push_event("update_voice_call_state", &[("client", &client_json)]);
+        }
+
+        fn on_call_signal(&self, id: i32, data: String) {
+            self.push_event(
+                "call_signal",
+                &[("id", &id.to_string()), ("data", &data)],
+            );
         }
 
         fn file_transfer_log(&self, action: &str, log: &str) {

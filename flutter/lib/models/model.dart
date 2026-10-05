@@ -10,6 +10,7 @@ import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter/scheduler.dart';
+import 'package:flutter_hbb/common/call/call_manager.dart';
 import 'package:flutter_hbb/common/widgets/peers_view.dart';
 import 'package:flutter_hbb/consts.dart';
 import 'package:flutter_hbb/models/ab_model.dart';
@@ -364,6 +365,17 @@ class FfiModel with ChangeNotifier {
       } else if (name == 'chat_server_mode') {
         parent.target?.chatModel
             .receive(int.parse(evt['id'] as String), evt['text'] ?? '');
+      } else if (name == 'call_signal') {
+        final data = evt['data']?.toString() ?? '';
+        if (evt['id'] != null) {
+          final connId = int.parse(evt['id'].toString());
+          CallManager.instance.onSignal(data,
+              (payload) => bind.cmSendCallSignal(connId: connId, data: payload));
+        } else {
+          CallManager.instance.onSignal(data,
+              (payload) =>
+                  bind.sessionSendCallSignal(sessionId: sessionId, data: payload));
+        }
       } else if (name == 'terminal_response') {
         parent.target?.routeTerminalResponse(evt);
       } else if (name == 'file_dir') {

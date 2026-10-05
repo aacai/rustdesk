@@ -107,6 +107,14 @@ class MainService : Service() {
             "is_start" -> {
                 isStart.toString()
             }
+            "camera_size" -> {
+                getCameraService()?.getCameraSize()?.let {
+                    JSONObject().apply {
+                        put("width", it.width)
+                        put("height", it.height)
+                    }.toString()
+                } ?: ""
+            }
             else -> ""
         }
     }
@@ -178,6 +186,13 @@ class MainService : Service() {
                 }
                 
             }
+            "camera" -> {
+                if (arg1 == "on") {
+                    getCameraService()?.start()
+                } else {
+                    getCameraService()?.stop()
+                }
+            }
             else -> {
             }
         }
@@ -222,6 +237,13 @@ class MainService : Service() {
         }
     private var mediaProjectionForegroundService = false
     private var microphoneForegroundService = false
+    private var cameraService: CameraService? = null
+    private fun getCameraService(): CameraService {
+        if (cameraService == null) {
+            cameraService = CameraService(this)
+        }
+        return cameraService!!
+    }
     private var surface: Surface? = null
     private val sendVP9Thread = Executors.newSingleThreadExecutor()
     private var videoEncoder: MediaCodec? = null

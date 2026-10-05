@@ -466,11 +466,12 @@ const kActionApplicationDetailsSettings =
 const kActionAccessibilitySettings = "android.settings.ACCESSIBILITY_SETTINGS";
 
 const kRecordAudio = "android.permission.RECORD_AUDIO";
-const kManageExternalStorage = "android.permission.MANAGE_EXTERNAL_STORAGE";
+const kCamera = "android.permission.CAMERA";
 const kRequestIgnoreBatteryOptimizations =
     "android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS";
 const kSystemAlertWindow = "android.permission.SYSTEM_ALERT_WINDOW";
 const kAndroid13Notification = "android.permission.POST_NOTIFICATIONS";
+const kManageExternalStorage = "android.permission.MANAGE_EXTERNAL_STORAGE";
 
 /// Android channel invoke type key
 class AndroidChannel {
