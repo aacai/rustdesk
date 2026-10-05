@@ -1305,8 +1305,10 @@ class __DisplayPageState extends State<_DisplayPage> {
         ),
         SettingsSection(
           title: Text(translate('Other Default Options')),
-          tiles:
-              otherDefaultSettings().map((e) => otherRow(e.$1, e.$2)).toList(),
+          tiles: [
+            ...otherDefaultSettings().map((e) => otherRow(e.$1, e.$2)),
+            ...autoUnlockRemoteMobileTiles(context, () => setState(() {})),
+          ],
         ),
       ]),
     );
