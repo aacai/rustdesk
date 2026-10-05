@@ -33,6 +33,13 @@ pub struct Cameras;
 
 // pre-condition
 pub fn primary_camera_exists() -> bool {
+    #[cfg(target_os = "android")]
+    {
+        // Camera capture on Android is handled by the app (Camera2) and reported
+        // through the existing video raw buffer, so we optimistically report that
+        // a primary camera exists; the actual availability is checked at capture time.
+        return true;
+    }
     Cameras::exists(PRIMARY_CAMERA_IDX)
 }
 
