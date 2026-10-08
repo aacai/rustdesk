@@ -34,23 +34,6 @@ class VideoCallDialog extends StatelessWidget {
               ),
             ),
             Positioned(
-              top: 12,
-              right: 12,
-              width: 176,
-              height: 132,
-              child: ClipRRect(
-                borderRadius: BorderRadius.circular(8),
-                child: ColoredBox(
-                  color: Colors.black54,
-                  child: RTCVideoView(
-                    manager.localRenderer,
-                    mirror: true,
-                    objectFit: RTCVideoViewObjectFit.RTCVideoViewObjectFitCover,
-                  ),
-                ),
-              ),
-            ),
-            Positioned(
               top: 8,
               left: 8,
               child: _roundButton(
@@ -75,15 +58,12 @@ class VideoCallDialog extends StatelessWidget {
     return ValueListenableBuilder<CallState>(
       valueListenable: manager.state,
       builder: (_, st, __) {
+        // The call ended (locally or via a `bye` from the peer): close the UI.
         if (st == CallState.idle) {
-          return Center(
-            child: _roundButton(
-              icon: Icons.call,
-              color: Colors.green,
-              size: 56,
-              onPressed: manager.call,
-            ),
-          );
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (context.mounted) Navigator.of(context).maybePop();
+          });
+          return const SizedBox.shrink();
         }
         return Row(
           mainAxisAlignment: MainAxisAlignment.center,
@@ -96,7 +76,7 @@ class VideoCallDialog extends StatelessWidget {
                 onPressed: manager.toggleMic,
               ),
             ),
-            const SizedBox(width: 20),
+            const SizedBox(width: 16),
             ValueListenableBuilder<bool>(
               valueListenable: manager.cameraOn,
               builder: (_, on, __) => _roundButton(
@@ -105,7 +85,25 @@ class VideoCallDialog extends StatelessWidget {
                 onPressed: manager.toggleCamera,
               ),
             ),
-            const SizedBox(width: 20),
+            const SizedBox(width: 16),
+            ValueListenableBuilder<bool>(
+              valueListenable: manager.peerMicOn,
+              builder: (_, on, __) => _roundButton(
+                icon: on ? Icons.volume_up : Icons.volume_off,
+                color: on ? Colors.blueAccent : Colors.red,
+                onPressed: manager.togglePeerMic,
+              ),
+            ),
+            const SizedBox(width: 16),
+            ValueListenableBuilder<bool>(
+              valueListenable: manager.peerCameraOn,
+              builder: (_, on, __) => _roundButton(
+                icon: on ? Icons.video_camera_back : Icons.videocam_off,
+                color: on ? Colors.blueAccent : Colors.red,
+                onPressed: manager.togglePeerCamera,
+              ),
+            ),
+            const SizedBox(width: 16),
             _roundButton(
               icon: Icons.call_end,
               color: Colors.red,

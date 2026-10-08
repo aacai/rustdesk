@@ -2955,11 +2955,16 @@ class _VideoCallMenu extends StatelessWidget {
   Widget build(BuildContext context) {
     return _IconMenuButton(
       icon: const Icon(Icons.video_call, size: 16),
-      tooltip: 'Video call',
+      tooltip: translate('Video call'),
       onPressed: () async {
-        await CallManager.instance.open((payload) =>
+        final manager = CallManager.instance;
+        if (manager.inCall) {
+          manager.showUi();
+          return;
+        }
+        await manager.open((payload) =>
             bind.sessionSendCallSignal(sessionId: ffi.sessionId, data: payload));
-        CallManager.instance.showUi();
+        await manager.call();
       },
       color: _ToolbarTheme.blueColor,
       hoverColor: _ToolbarTheme.hoverBlueColor,

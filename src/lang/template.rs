@@ -781,6 +781,7 @@ pub static ref T: std::collections::HashMap<&'static str, &'static str> =
         ("Relay fallback delay in seconds", ""),
         ("relay-fallback-delay-tip", ""),
         ("To start a voice call, enable \"Audio capture\" on the \"Screen share\" page.", ""),
-        ("Auto unlock remote", "")
+        ("Auto unlock remote", ""),
+        ("Video call", ""),
     ].iter().cloned().collect();
 }
