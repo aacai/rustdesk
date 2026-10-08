@@ -827,5 +827,6 @@ pub static ref T: std::collections::HashMap<&'static str, &'static str> =
         ("Request approval", "स्वीकृति का अनुरोध करें"),
         ("To start a voice call, enable \"Audio capture\" on the \"Screen share\" page.", ""),
         ("Auto unlock remote", ""),
+        ("Video call", ""),
     ].iter().cloned().collect();
 }

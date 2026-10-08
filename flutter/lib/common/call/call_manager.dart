@@ -19,18 +19,25 @@ class CallManager {
   CallManager._();
   static final CallManager instance = CallManager._();
 
-  final RTCVideoRenderer localRenderer = RTCVideoRenderer();
+  // Local video is captured and sent but never rendered locally for now.
   final RTCVideoRenderer remoteRenderer = RTCVideoRenderer();
 
   final ValueNotifier<CallState> state = ValueNotifier(CallState.idle);
   final ValueNotifier<bool> micOn = ValueNotifier(true);
   final ValueNotifier<bool> cameraOn = ValueNotifier(true);
+  // What this side wants the peer to send; driven through `ctl` signals.
+  final ValueNotifier<bool> peerMicOn = ValueNotifier(true);
+  final ValueNotifier<bool> peerCameraOn = ValueNotifier(true);
 
   RTCPeerConnection? _pc;
   MediaStream? _localStream;
   CallSignalSender? _send;
   bool _renderersReady = false;
   bool uiVisible = false;
+  // Remote requests to mute our outgoing tracks, possibly received before the
+  // local stream exists; applied again once capture starts.
+  bool? _remoteAudioOn;
+  bool? _remoteVideoOn;
 
   bool get inCall => _pc != null;
 
@@ -55,7 +62,6 @@ class CallManager {
 
   Future<void> _ensureRenderers() async {
     if (_renderersReady) return;
-    await localRenderer.initialize();
     await remoteRenderer.initialize();
     _renderersReady = true;
   }
@@ -70,13 +76,24 @@ class CallManager {
     if (!await AndroidPermissionManager.check(kRecordAudio)) {
       await AndroidPermissionManager.request(kRecordAudio);
     }
-    _localStream =
-        await navigator.mediaDevices.getUserMedia(_mediaConstraints);
-    localRenderer.srcObject = _localStream;
-    return _localStream!;
+    MediaStream? stream;
+    try {
+      stream = await navigator.mediaDevices.getUserMedia(_mediaConstraints);
+    } catch (_) {
+      // No camera (or it is busy): fall back to audio only so the call can
+      // still connect; the callee must never reject an offer for this reason.
+      try {
+        stream = await navigator.mediaDevices
+            .getUserMedia({'audio': true, 'video': false});
+      } catch (_) {}
+    }
+    stream ??= await createLocalMediaStream('local');
+    _localStream = stream;
+    _applyTrackState();
+    return stream;
   }
 
-  /// Binds the signaling sender and prepares the local preview.
+  /// Binds the signaling sender and prepares capture devices.
   Future<void> open(CallSignalSender send) async {
     _send = send;
     await _ensureRenderers();
@@ -118,6 +135,7 @@ class CallManager {
 
   /// Caller: create the offer and send it.
   Future<void> call() async {
+    if (_pc != null) return;
     await _ensureRenderers();
     final stream = await _ensureLocalStream();
     final pc = await _ensurePc();
@@ -149,6 +167,9 @@ class CallManager {
         break;
       case 'bye':
         await hangup();
+        break;
+      case 'ctl':
+        _onControl(signal);
         break;
     }
   }
@@ -193,12 +214,53 @@ class CallManager {
 
   void toggleMic() {
     micOn.value = !micOn.value;
-    _localStream?.getAudioTracks().forEach((t) => t.enabled = micOn.value);
+    _applyTrackState();
   }
 
   void toggleCamera() {
     cameraOn.value = !cameraOn.value;
-    _localStream?.getVideoTracks().forEach((t) => t.enabled = cameraOn.value);
+    _applyTrackState();
+  }
+
+  /// Asks the peer to turn its outgoing audio on/off.
+  void togglePeerMic() {
+    peerMicOn.value = !peerMicOn.value;
+    _sendControl();
+  }
+
+  /// Asks the peer to turn its outgoing video on/off.
+  void togglePeerCamera() {
+    peerCameraOn.value = !peerCameraOn.value;
+    _sendControl();
+  }
+
+  void _sendControl() {
+    _sendSignal(CallSignal('ctl', {
+      'a': peerMicOn.value,
+      'v': peerCameraOn.value,
+    }));
+  }
+
+  void _onControl(CallSignal s) {
+    final a = s.data['a'];
+    final v = s.data['v'];
+    if (a is bool) _remoteAudioOn = a;
+    if (v is bool) _remoteVideoOn = v;
+    _applyTrackState();
+  }
+
+  // A track is sent only when both the local user and the peer want it on.
+  void _applyTrackState() {
+    final stream = _localStream;
+    if (stream == null) return;
+    final audioOn = micOn.value && _remoteAudioOn != false;
+    final videoOn = cameraOn.value && _remoteVideoOn != false;
+    for (final t in stream.getAudioTracks()) {
+      t.enabled = audioOn;
+    }
+    for (final t in stream.getVideoTracks()) {
+      t.enabled = videoOn;
+    }
   }
 
   Future<void> hangup() async {
@@ -212,10 +274,13 @@ class CallManager {
       await _localStream?.dispose();
     } catch (_) {}
     _localStream = null;
-    localRenderer.srcObject = null;
     remoteRenderer.srcObject = null;
     state.value = CallState.idle;
     micOn.value = true;
     cameraOn.value = true;
+    peerMicOn.value = true;
+    peerCameraOn.value = true;
+    _remoteAudioOn = null;
+    _remoteVideoOn = null;
   }
 }

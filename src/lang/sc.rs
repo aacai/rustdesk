@@ -827,5 +827,6 @@ pub static ref T: std::collections::HashMap<&'static str, &'static str> =
         ("Request approval", "Pedi s'aprovatzione"),
         ("To start a voice call, enable \"Audio capture\" on the \"Screen share\" page.", "Pro aviare una mutida de boghe, ativa in sa pàgina \"Cumpartzidura de ischermu\" s’elementu \"Catura de s’àudio\"."),
         ("Auto unlock remote", ""),
+        ("Video call", ""),
     ].iter().cloned().collect();
 }
