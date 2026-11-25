@@ -9,6 +9,9 @@ PODS:
     - FlutterMacOS
   - flutter_custom_cursor (0.0.1):
     - FlutterMacOS
+  - flutter_webrtc (0.11.3):
+    - FlutterMacOS
+    - WebRTC-SDK (= 125.6422.04)
   - FlutterMacOS (1.0.0)
   - FMDB (2.7.12):
     - FMDB/standard (= 2.7.12)
@@ -36,6 +39,7 @@ PODS:
     - FlutterMacOS
   - wakelock_plus (0.0.1):
     - FlutterMacOS
+  - WebRTC-SDK (125.6422.04)
   - window_manager (0.2.0):
     - FlutterMacOS
   - window_size (0.0.2):
@@ -47,6 +51,7 @@ DEPENDENCIES:
   - device_info_plus (from `Flutter/ephemeral/.symlinks/plugins/device_info_plus/macos`)
   - file_selector_macos (from `Flutter/ephemeral/.symlinks/plugins/file_selector_macos/macos`)
   - flutter_custom_cursor (from `Flutter/ephemeral/.symlinks/plugins/flutter_custom_cursor/macos`)
+  - flutter_webrtc (from `Flutter/ephemeral/.symlinks/plugins/flutter_webrtc/macos`)
   - FlutterMacOS (from `Flutter/ephemeral`)
   - package_info_plus (from `Flutter/ephemeral/.symlinks/plugins/package_info_plus/macos`)
   - path_provider_foundation (from `Flutter/ephemeral/.symlinks/plugins/path_provider_foundation/darwin`)
@@ -63,6 +68,7 @@ DEPENDENCIES:
 SPEC REPOS:
   trunk:
     - FMDB
+    - WebRTC-SDK
 
 EXTERNAL SOURCES:
   desktop_drop:
@@ -75,6 +81,8 @@ EXTERNAL SOURCES:
     :path: Flutter/ephemeral/.symlinks/plugins/file_selector_macos/macos
   flutter_custom_cursor:
     :path: Flutter/ephemeral/.symlinks/plugins/flutter_custom_cursor/macos
+  flutter_webrtc:
+    :path: Flutter/ephemeral/.symlinks/plugins/flutter_webrtc/macos
   FlutterMacOS:
     :path: Flutter/ephemeral
   package_info_plus:
@@ -106,6 +114,7 @@ SPEC CHECKSUMS:
   device_info_plus: b0fafc687fb901e2af612763340f1b0d4352f8e5
   file_selector_macos: 6280b52b459ae6c590af5d78fc35c7267a3c4b31
   flutter_custom_cursor: 37e588711a2746f5cf48adb58b582cacff11c0c6
+  flutter_webrtc: f68f019e758ba8ea97d3a2aa5d85b3b25bce4015
   FlutterMacOS: 8f6f14fa908a6fb3fba0cd85dbd81ec4b251fb24
   FMDB: 728731dd336af3936ce00f91d9d8495f5718a0e6
   package_info_plus: 122abb51244f66eead59ce7c9c200d6b53111779
@@ -117,6 +126,7 @@ SPEC CHECKSUMS:
   url_launcher_macos: 0fba8ddabfc33ce0a9afe7c5fef5aab3d8d2d673
   video_player_avfoundation: 2cef49524dd1f16c5300b9cd6efd9611ce03639b
   wakelock_plus: 21ddc249ac4b8d018838dbdabd65c5976c308497
+  WebRTC-SDK: c3d69a87e7185fad3568f6f3cff7c9ac5890acf3
   window_manager: 1d01fa7ac65a6e6f83b965471b1a7fdd3f06166c
   window_size: 4bd15034e6e3d0720fd77928a7c42e5492cfece9
 
