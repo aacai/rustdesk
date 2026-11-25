@@ -364,6 +364,9 @@ pub enum Data {
     ChatMessage {
         text: String,
     },
+    CallSignal {
+        data: String,
+    },
     SwitchPermission {
         name: String,
         enabled: bool,

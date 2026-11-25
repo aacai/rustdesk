@@ -7,6 +7,7 @@ import 'package:flutter_hbb/common/widgets/audio_input.dart';
 import 'package:flutter_hbb/common/widgets/dialog.dart';
 import 'package:flutter_hbb/common/widgets/keyboard_shortcuts/display.dart';
 import 'package:flutter_hbb/common/widgets/toolbar.dart';
+import 'package:flutter_hbb/common/call/call_manager.dart';
 import 'package:flutter_hbb/models/chat_model.dart';
 import 'package:flutter_hbb/models/state_model.dart';
 import 'package:flutter_hbb/consts.dart';
@@ -849,6 +850,7 @@ class _RemoteToolbarState extends State<RemoteToolbar> {
     toolbarItems.add(_ChatMenu(id: widget.id, ffi: widget.ffi));
     if (!isWeb) {
       toolbarItems.add(_VoiceCallMenu(id: widget.id, ffi: widget.ffi));
+      toolbarItems.add(_VideoCallMenu(id: widget.id, ffi: widget.ffi));
     }
     if (!isWeb) toolbarItems.add(_RecordMenu());
     toolbarItems.add(_CloseMenu(id: widget.id, ffi: widget.ffi));
@@ -2971,6 +2973,33 @@ class _VoiceCallMenu extends StatelessWidget {
   }
 }
 
+class _VideoCallMenu extends StatelessWidget {
+  final String id;
+  final FFI ffi;
+  const _VideoCallMenu({Key? key, required this.id, required this.ffi})
+      : super(key: key);
+
+  @override
+  Widget build(BuildContext context) {
+    return _IconMenuButton(
+      icon: const Icon(Icons.video_call, size: 16),
+      tooltip: translate('Video call'),
+      onPressed: () async {
+        final manager = CallManager.instance;
+        if (manager.inCall) {
+          manager.showUi();
+          return;
+        }
+        await manager.open((payload) =>
+            bind.sessionSendCallSignal(sessionId: ffi.sessionId, data: payload));
+        await manager.call();
+      },
+      color: _ToolbarTheme.blueColor,
+      hoverColor: _ToolbarTheme.hoverBlueColor,
+    );
+  }
+}
+
 class _RecordMenu extends StatelessWidget {
   const _RecordMenu({Key? key}) : super(key: key);
 
@@ -3018,6 +3047,27 @@ class _CloseMenu extends StatelessWidget {
       },
       color: _ToolbarTheme.redColor,
       hoverColor: _ToolbarTheme.hoverRedColor,
+    );
+  }
+}
+
+class _CameraMenu extends StatelessWidget {
+  final String id;
+  final FFI ffi;
+  const _CameraMenu({Key? key, required this.id, required this.ffi})
+      : super(key: key);
+
+  @override
+  Widget build(BuildContext context) {
+    return _IconMenuButton(
+      icon: const Icon(Icons.videocam, size: 16),
+      tooltip: 'View camera',
+      onPressed: () {
+        final connToken = bind.sessionGetConnToken(sessionId: ffi.sessionId);
+        connect(context, id, isViewCamera: true, connToken: connToken);
+      },
+      color: _ToolbarTheme.blueColor,
+      hoverColor: _ToolbarTheme.hoverBlueColor,
     );
   }
 }

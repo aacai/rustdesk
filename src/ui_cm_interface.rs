@@ -189,6 +189,8 @@ pub trait InvokeUiCM: Send + Clone + 'static + Sized {
 
     fn new_message(&self, id: i32, text: String);
 
+    fn on_call_signal(&self, _id: i32, _data: String) {}
+
     fn change_theme(&self, dark: String);
 
     fn change_language(&self);
@@ -403,6 +405,16 @@ pub fn send_chat(id: i32, text: String) {
     }
 }
 
+// server mode send call signal to peer
+#[inline]
+#[cfg(not(any(target_os = "ios")))]
+pub fn send_call_signal(id: i32, data: String) {
+    let clients = CLIENTS.read().unwrap();
+    if let Some(client) = clients.get(&id) {
+        allow_err!(client.tx.send(Data::CallSignal { data }));
+    }
+}
+
 #[inline]
 #[cfg(not(any(target_os = "ios")))]
 pub fn switch_permission(id: i32, name: String, enabled: bool) {
@@ -583,6 +595,9 @@ impl<T: InvokeUiCM> IpcTaskRunner<T> {
                                 }
                                 Data::ChatMessage { text } => {
                                     self.cm.new_message(self.conn_id, text);
+                                }
+                                Data::CallSignal { data } => {
+                                    self.cm.on_call_signal(self.conn_id, data);
                                 }
                                 Data::SwitchPermission { name, enabled } => {
                                     // Keep this branch scoped to privacy mode rollback.
@@ -935,6 +950,9 @@ pub async fn start_listen<T: InvokeUiCM>(
             }
             Some(Data::ChatMessage { text }) => {
                 cm.new_message(current_id, text);
+            }
+            Some(Data::CallSignal { data }) => {
+                cm.on_call_signal(current_id, data);
             }
             Some(Data::FS(fs)) => {
                 // Android doesn't need CM-side file reading (no need_validate_file_read_access)

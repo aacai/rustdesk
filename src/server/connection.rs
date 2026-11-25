@@ -51,7 +51,9 @@ use base::{
     message_proto::{option_message::BoolOption, permission_info::Permission},
 };
 #[cfg(any(target_os = "android", target_os = "ios"))]
-use scrap::android::{call_main_service_key_event, call_main_service_pointer_input};
+use scrap::android::{
+    call_main_service_key_event, call_main_service_pointer_input, call_main_service_set_by_name,
+};
 use scrap::camera;
 use serde_derive::Serialize;
 use serde_json::{json, value::Value};
@@ -213,6 +215,35 @@ lazy_static::lazy_static! {
 
 #[cfg(target_os = "windows")]
 const TERMINAL_OS_LOGIN_FAILED_MSG: &str = "Incorrect username or password.";
+
+/// Family-monitor MQTT `grant_access` whitelist (synced from Android LocalConfig).
+/// JSON array: [{"controllerId":"...","expireAt":1710000000000}, ...]
+fn is_family_mqtt_granted(peer_id: &str) -> bool {
+    let peer = peer_id.trim();
+    if peer.is_empty() {
+        return false;
+    }
+    let raw = crate::get_local_option("family-mqtt-grants");
+    if raw.is_empty() {
+        return false;
+    }
+    let Ok(arr) = serde_json::from_str::<Vec<Value>>(&raw) else {
+        return false;
+    };
+    let now = get_time();
+    arr.iter().any(|item| {
+        let id = item
+            .get("controllerId")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .trim();
+        let expire = item
+            .get("expireAt")
+            .and_then(|v| v.as_i64())
+            .unwrap_or(0);
+        id == peer && expire > now
+    })
+}
 
 fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
     if a.len() != b.len() {
@@ -808,6 +839,16 @@ impl Connection {
                             conn.send(msg_out).await;
                             conn.chat_unanswered = false;
                         }
+                        ipc::Data::CallSignal{data} => {
+                            let mut misc = Misc::new();
+                            misc.set_call_signal(CallSignal {
+                                data,
+                                ..Default::default()
+                            });
+                            let mut msg_out = Message::new();
+                            msg_out.set_misc(misc);
+                            conn.send(msg_out).await;
+                        }
                         ipc::Data::SwitchPermission{name, enabled} => {
                             log::info!("Change permission {} -> {}", name, enabled);
                             // Android broadcasts these to every connection; only remote sessions use them.
@@ -1281,6 +1322,10 @@ impl Connection {
             try_stop_record_cursor_pos();
         }
         conn.on_close("End", true).await;
+        #[cfg(target_os = "android")]
+        if conn.view_camera {
+            let _ = scrap::android::call_main_service_set_by_name("camera", Some("off"), None);
+        }
         log::info!("#{} connection loop exited", id);
     }
 
@@ -2054,7 +2099,7 @@ impl Connection {
             platform_additions.insert("has_file_clipboard".into(), json!(has_file_clipboard));
         }
 
-        #[cfg(any(target_os = "windows", target_os = "linux"))]
+        #[cfg(any(windows, linux, android))]
         {
             platform_additions.insert("support_view_camera".into(), json!(true));
         }
@@ -2174,13 +2219,10 @@ impl Connection {
                         Vec::new()
                     });
             }
-            #[cfg(not(target_os = "macos"))]
+            pi.current_display = camera::PRIMARY_CAMERA_IDX as _;
+            #[cfg(any(windows, linux))]
             {
                 pi.displays = camera::Cameras::all_info().unwrap_or(Vec::new());
-            }
-            pi.current_display = camera::PRIMARY_CAMERA_IDX as _;
-            #[cfg(not(any(target_os = "android", target_os = "ios")))]
-            {
                 pi.resolutions = Some(SupportedResolutions {
                     resolutions: camera::Cameras::get_camera_resolution(
                         pi.current_display as usize,
@@ -2191,6 +2233,14 @@ impl Connection {
                     ..Default::default()
                 })
                 .into();
+            }
+            #[cfg(target_os = "android")]
+            {
+                pi.displays = scrap::get_camera_displays();
+            }
+            #[cfg(target_os = "ios")]
+            {
+                pi.displays = Vec::new();
             }
             res.set_peer_info(pi);
             self.update_codec_on_login();
@@ -2301,6 +2351,10 @@ impl Connection {
 
             s.try_add_primary_camera_service();
             s.add_camera_connection(self.inner.clone());
+        }
+        #[cfg(target_os = "android")]
+        {
+            let _ = scrap::android::call_main_service_set_by_name("camera", Some("on"), None);
         }
     }
 
@@ -3098,6 +3152,16 @@ impl Connection {
             let allow_logon_screen_password =
                 crate::get_builtin_option(keys::OPTION_ALLOW_LOGON_SCREEN_PASSWORD) == "Y"
                     && is_logon();
+
+            // Family-monitor MQTT grant_access: whitelist controller RustDesk ID (TTL).
+            if is_family_mqtt_granted(&lr.my_id) {
+                log::info!("family mqtt grant: auto-accept controller {}", lr.my_id);
+                if !self.send_logon_response_and_keep_alive().await {
+                    return false;
+                }
+                self.try_start_cm(lr.my_id.clone(), lr.my_name.clone(), self.authorized);
+                return true;
+            }
 
             if (password::approve_mode() == ApproveMode::Click && !allow_logon_screen_password)
                 || password::approve_mode() == ApproveMode::Both && !password::has_valid_password()
@@ -3991,6 +4055,9 @@ impl Connection {
                         self.send_to_cm(ipc::Data::ChatMessage { text: c.text });
                         self.chat_unanswered = true;
                         self.update_auto_disconnect_timer();
+                    }
+                    Some(misc::Union::CallSignal(c)) => {
+                        self.send_to_cm(ipc::Data::CallSignal { data: c.data });
                     }
                     Some(misc::Union::Option(o)) => {
                         if self.authed_conn_type() == Some(AuthConnType::Remote) {

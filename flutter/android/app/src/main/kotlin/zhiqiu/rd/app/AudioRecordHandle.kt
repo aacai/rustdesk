@@ -1,4 +1,4 @@
-package com.carriez.flutter_hbb
+package zhiqiu.rd.app
 
 import ffi.FFI
 

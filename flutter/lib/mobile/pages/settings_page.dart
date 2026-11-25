@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:typed_data';
 
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_hbb/common/widgets/setting_widgets.dart';
 import 'package:flutter_hbb/desktop/pages/desktop_setting_page.dart';
@@ -12,6 +13,7 @@ import 'package:url_launcher/url_launcher.dart';
 import 'package:url_launcher/url_launcher_string.dart';
 
 import '../../common.dart';
+import '../../common/mqtt_coordinator.dart';
 import '../../common/widgets/dialog.dart';
 import '../../common/widgets/login.dart';
 import '../../consts.dart';
@@ -22,6 +24,7 @@ import '../../models/shortcut_model.dart';
 import '../widgets/dialog.dart';
 import 'home_page.dart';
 import 'mobile_keyboard_shortcuts_page.dart';
+import 'mqtt_send_page.dart';
 import 'scan_page.dart';
 
 class SettingsPage extends StatefulWidget implements PageShape {
@@ -624,23 +627,10 @@ class _SettingsState extends State<SettingsPage> with WidgetsBindingObserver {
         ]),
         onToggle: (toValue) async {
           if (toValue) {
-            // 1. request kIgnoreBatteryOptimizations
-            if (!await AndroidPermissionManager.check(
-                kRequestIgnoreBatteryOptimizations)) {
-              if (!await AndroidPermissionManager.request(
-                  kRequestIgnoreBatteryOptimizations)) {
-                return;
-              }
-            }
-
-            // 2. request kSystemAlertWindow
+            // Optional: overlay helps keep-alive on some OEM ROMs
             if (!await AndroidPermissionManager.check(kSystemAlertWindow)) {
-              if (!await AndroidPermissionManager.request(kSystemAlertWindow)) {
-                return;
-              }
+              await AndroidPermissionManager.request(kSystemAlertWindow);
             }
-
-            // (Optional) 3. request input permission
           }
           setState(() => _enableStartOnBoot = toValue);
 
@@ -933,6 +923,17 @@ class _SettingsState extends State<SettingsPage> with WidgetsBindingObserver {
                 });
               },
             ),
+          SettingsTile(
+            title: Text('家庭监控'),
+            leading: Icon(Icons.home),
+            onPressed: (context) {
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                    builder: (BuildContext context) => _FamilyMonitorPage()),
+              );
+            },
+          ),
           if (!bind.isDisableAccount())
             SettingsTile.switchTile(
               title: Text(translate('note-at-conn-end-tip')),
@@ -1028,9 +1029,21 @@ class _SettingsState extends State<SettingsPage> with WidgetsBindingObserver {
                           });
                         },
                 ),
-              SettingsTile(
+              SettingsTile.navigation(
                 title: Text(translate("Directory")),
                 description: Text(bind.mainVideoSaveDirectory(root: false)),
+                onPressed: isOptionFixed(kOptionVideoSaveDirectory)
+                    ? null
+                    : (context) async {
+                        String? selectedDirectory =
+                            await FilePicker.platform.getDirectoryPath();
+                        if (selectedDirectory != null) {
+                          await bind.mainSetLocalOption(
+                              key: kOptionVideoSaveDirectory,
+                              value: selectedDirectory);
+                          setState(() {});
+                        }
+                      },
               ),
             ],
           ),
@@ -1110,13 +1123,6 @@ class _SettingsState extends State<SettingsPage> with WidgetsBindingObserver {
   }
 
   Future<bool> canStartOnBoot() async {
-    // start on boot depends on ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS and SYSTEM_ALERT_WINDOW
-    if (_hasIgnoreBattery && !_ignoreBatteryOpt) {
-      return false;
-    }
-    if (!await AndroidPermissionManager.check(kSystemAlertWindow)) {
-      return false;
-    }
     return true;
   }
 
@@ -1335,8 +1341,10 @@ class __DisplayPageState extends State<_DisplayPage> {
         ),
         SettingsSection(
           title: Text(translate('Other Default Options')),
-          tiles:
-              otherDefaultSettings().map((e) => otherRow(e.$1, e.$2)).toList(),
+          tiles: [
+            ...otherDefaultSettings().map((e) => otherRow(e.$1, e.$2)),
+            ...autoUnlockRemoteMobileTiles(context, () => setState(() {})),
+          ],
         ),
       ]),
     );
@@ -1475,4 +1483,397 @@ SettingsTile _getPopupDialogRadioEntry({
       child: Obx(() => Text(translate(valueText.value))),
     ),
   );
+}
+
+class _FamilyMonitorPage extends StatefulWidget {
+  const _FamilyMonitorPage();
+
+  @override
+  State<_FamilyMonitorPage> createState() => __FamilyMonitorPageState();
+}
+
+class __FamilyMonitorPageState extends State<_FamilyMonitorPage>
+    with WidgetsBindingObserver {
+  bool _heartbeatEnabled = false;
+  bool _autoAccept = false;
+  bool _autoAnswerVoice = false;
+  bool _denyLanDiscovery = false;
+  bool _watchdogEnabled = false;
+  bool _blackScreenRunning = false;
+  bool _shizukuInstalled = false;
+  bool _adbScreenOff = false;
+  int _configCheckIntervalMin = 1440;
+  int _heartbeatIntervalSec = 10;
+
+  @override
+  void initState() {
+    super.initState();
+    _readStorage();
+    familyMonitorChanged.addListener(_onChanged);
+    WidgetsBinding.instance.addObserver(this);
+    _checkScreenOffStatus();
+    // Every time the page opens, check the remote config once.
+    MqttCoordinator.instance.checkRemoteConfigNow();
+  }
+
+  void _checkScreenOffStatus() async {
+    final blackRunning = await gFFI.invokeMethod(AndroidChannel.kIsBlackScreenRunning);
+    final shizukuInstalled = await gFFI.invokeMethod(AndroidChannel.kIsShizukuInstalled);
+    if (mounted) {
+      setState(() {
+        _blackScreenRunning = blackRunning == true;
+        _shizukuInstalled = shizukuInstalled == true;
+      });
+    }
+  }
+
+  @override
+  void dispose() {
+    familyMonitorChanged.removeListener(_onChanged);
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) _onChanged();
+  }
+
+  void _readStorage() {
+    _heartbeatEnabled = mainGetLocalBoolOptionSync(kOptionMqttHeartbeat);
+    _autoAccept = mainGetLocalBoolOptionSync(kOptionMqttAutoAccept);
+    _autoAnswerVoice = mainGetLocalBoolOptionSync(kOptionMqttAutoAnswerVoice);
+    _denyLanDiscovery = mainGetLocalBoolOptionSync(kOptionMqttDenyLanDiscovery);
+    _watchdogEnabled = mainGetLocalBoolOptionSync(kOptionMqttWatchdog);
+    _configCheckIntervalMin = int.tryParse(
+            bind.mainGetLocalOption(key: kOptionMqttConfigCheckIntervalMin)) ??
+        1440;
+    _heartbeatIntervalSec = int.tryParse(
+            bind.mainGetLocalOption(key: kOptionMqttHeartbeatIntervalSec)) ??
+        10;
+  }
+
+  void _onChanged() {
+    _readStorage();
+    if (mounted) setState(() {});
+  }
+
+  SettingsTile _switchTile(String title, bool value, String optionKey) {
+    return SettingsTile(
+      title: Text(title),
+      trailing: Switch(
+        value: value,
+        onChanged: (v) async {
+          await mainSetLocalBoolOptionAndNotify(optionKey, v);
+          showToast(v ? '已开启$title' : '已关闭$title');
+        },
+      ),
+      onPressed: (v) async {
+        await mainSetLocalBoolOptionAndNotify(optionKey, !value);
+        showToast(!value ? '已开启$title' : '已关闭$title');
+      },
+    );
+  }
+
+  SettingsTile _mqttConnectionTile() {
+    return SettingsTile(
+      title: const Text('MQTT 连接状态'),
+      trailing: StreamBuilder<bool>(
+        initialData: MqttCoordinator.instance.isConnected,
+        stream: MqttCoordinator.instance.onConnectionChanged,
+        builder: (context, snap) {
+          final connected = snap.data ?? false;
+          return Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(
+                connected ? Icons.check_circle : Icons.error,
+                color: connected ? Colors.green : Colors.red,
+              ),
+              const SizedBox(width: 6),
+              Text(connected ? '已连接' : '未连接'),
+            ],
+          );
+        },
+      ),
+    );
+  }
+
+  SettingsTile _batteryOptimizationTile() {
+    return SettingsTile(
+      title: const Text('电池优化'),
+      description: const Text('关闭电池优化以保持 MQTT 后台连接'),
+      trailing: ElevatedButton(
+        onPressed: () async {
+          final ignored = await gFFI.invokeMethod(
+              AndroidChannel.kIsBatteryOptimizationIgnored);
+          if (ignored == true) {
+            showToast('已关闭电池优化');
+            return;
+          }
+          await gFFI.invokeMethod(AndroidChannel.kRequestBatteryOptimization);
+        },
+        child: const Text('设置'),
+      ),
+    );
+  }
+
+  SettingsTile _sendCheckUpdateTile() {
+    return SettingsTile(
+      title: const Text('发送检查更新'),
+      description: const Text('点击向服务器发送一次检查更新命令'),
+      trailing: ElevatedButton(
+        onPressed: () {
+          final sent = MqttCoordinator.instance.sendCheckUpdate();
+          showToast(sent ? '已发送检查更新命令' : 'MQTT 未连接，无法发送');
+        },
+        child: const Text('发送'),
+      ),
+    );
+  }
+
+  SettingsTile _getPolicyTile() {
+    return SettingsTile(
+      title: const Text('获取策略'),
+      description: const Text('获取当前设备的远程策略配置'),
+      trailing: ElevatedButton(
+        onPressed: () async {
+          if (!MqttCoordinator.instance.isConnected) {
+            showToast('MQTT 未连接，无法获取策略');
+            return;
+          }
+          final deviceId = MqttCoordinator.instance.deviceId;
+          final sent = MqttCoordinator.instance.publishCmd(deviceId, 'get_policy', {});
+          if (!sent) {
+            showToast('发送失败');
+            return;
+          }
+          showToast('已发送获取策略请求');
+          // Subscribe for ACK
+          StreamSubscription? sub;
+          sub = MqttCoordinator.instance.onControllerUpMessage.listen((msg) {
+            if (msg['type'] == 'ack' && msg['action'] == 'get_policy') {
+              sub?.cancel();
+              final ok = msg['ok'] == true;
+              if (ok) {
+                final data = msg['data'] ?? {};
+                final pretty = const JsonEncoder.withIndent('  ').convert(data);
+                showDialog(
+                  context: context,
+                  builder: (_) => AlertDialog(
+                    title: const Text('当前策略'),
+                    content: SingleChildScrollView(
+                      child: Text(pretty, style: const TextStyle(fontFamily: 'monospace', fontSize: 13)),
+                    ),
+                    actions: [
+                      TextButton(
+                        onPressed: () => Navigator.pop(context),
+                        child: const Text('关闭'),
+                      ),
+                    ],
+                  ),
+                );
+              } else {
+                showToast('获取策略失败: ${msg['message'] ?? '未知错误'}');
+              }
+            }
+          });
+        },
+        child: const Text('获取'),
+      ),
+    );
+  }
+
+  /// A tile that opens a single-choice dialog to pick an interval value.
+  /// [options] maps stored int value → display label.
+  SettingsTile _intervalTile({
+    required String title,
+    required int current,
+    required Map<int, String> options,
+    required String optionKey,
+  }) {
+    final label = options[current] ?? '$current';
+    return SettingsTile(
+      title: Text(title),
+      value: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 8),
+        child: Text(label),
+      ),
+      onPressed: (context) async {
+        final picked = await showDialog<int>(
+          context: context,
+          builder: (context) => SimpleDialog(
+            title: Text(title),
+            children: options.entries
+                .map((e) => RadioListTile<int>(
+                      title: Text(e.value),
+                      value: e.key,
+                      groupValue: current,
+                      onChanged: (v) => Navigator.pop(context, v),
+                    ))
+                .toList(),
+          ),
+        );
+        if (picked != null && picked != current) {
+          await mainSetLocalOptionAndNotify(optionKey, picked.toString());
+          showToast('已设置：$title ${options[picked] ?? picked}');
+        }
+      },
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        leading: IconButton(
+            onPressed: () => Navigator.pop(context),
+            icon: Icon(Icons.arrow_back_ios)),
+        title: GestureDetector(
+          onLongPress: () {
+            Navigator.push(
+              context,
+              MaterialPageRoute(builder: (_) => const MqttSendPage()),
+            );
+          },
+          child: const Text('家庭监控'),
+        ),
+        centerTitle: true,
+      ),
+      body: SettingsList(sections: [
+        SettingsSection(
+          title: const Text('MQTT'),
+          tiles: [
+            SettingsTile(
+              title: const Text('本机设备 ID'),
+              value: Text(MqttCoordinator.instance.deviceId),
+            ),
+            _mqttConnectionTile(),
+            if (isAndroid) _batteryOptimizationTile(),
+            _sendCheckUpdateTile(),
+            _getPolicyTile(),
+          ],
+        ),
+        SettingsSection(
+          title: const Text('策略设置'),
+          tiles: [
+            _switchTile('自动允许被控', _autoAccept, kOptionMqttAutoAccept),
+            _switchTile('自动接听语音', _autoAnswerVoice, kOptionMqttAutoAnswerVoice),
+            _switchTile('禁止局域网发现', _denyLanDiscovery, kOptionMqttDenyLanDiscovery),
+            _switchTile('启用心跳', _heartbeatEnabled, kOptionMqttHeartbeat),
+            _intervalTile(
+              title: '心跳周期',
+              current: _heartbeatIntervalSec,
+              optionKey: kOptionMqttHeartbeatIntervalSec,
+              options: const {
+                10: '10 秒',
+                30: '30 秒',
+                60: '1 分钟',
+                300: '5 分钟',
+              },
+            ),
+            _switchTile('看门狗', _watchdogEnabled, kOptionMqttWatchdog),
+            _intervalTile(
+              title: '配置检查频率',
+              current: _configCheckIntervalMin,
+              optionKey: kOptionMqttConfigCheckIntervalMin,
+              options: const {
+                60: '1 小时',
+                360: '6 小时',
+                720: '12 小时',
+                1440: '1 天',
+              },
+            ),
+          ],
+        ),
+        if (isAndroid)
+          SettingsSection(
+            title: const Text('息屏模式'),
+            tiles: [
+              SettingsTile.switchTile(
+                title: const Text('悬浮窗黑屏'),
+                description: const Text('显示全屏黑屏，双击或长按退出'),
+                initialValue: _blackScreenRunning,
+                onToggle: (v) async {
+                  if (v) {
+                    // Show confirmation dialog
+                    final confirm = await showDialog<bool>(
+                      context: context,
+                      builder: (context) => AlertDialog(
+                        title: const Text('确认'),
+                        content: const Text('确定开启黑屏模式？\n双击或长按 3 秒退出'),
+                        actions: [
+                          TextButton(
+                            onPressed: () => Navigator.pop(context, false),
+                            child: const Text('取消'),
+                          ),
+                          TextButton(
+                            onPressed: () => Navigator.pop(context, true),
+                            child: const Text('确定'),
+                          ),
+                        ],
+                      ),
+                    );
+                    if (confirm != true) return;
+
+                    // Check and request overlay permission
+                    if (!await AndroidPermissionManager.check(kSystemAlertWindow)) {
+                      await AndroidPermissionManager.request(kSystemAlertWindow);
+                      if (!await AndroidPermissionManager.check(kSystemAlertWindow)) {
+                        return;
+                      }
+                    }
+                    final started = await gFFI.invokeMethod(AndroidChannel.kStartBlackScreen);
+                    if (started != true) {
+                      return;
+                    }
+                  } else {
+                    await gFFI.invokeMethod(AndroidChannel.kStopBlackScreen);
+                  }
+                  final running = await gFFI.invokeMethod(AndroidChannel.kIsBlackScreenRunning);
+                  if (mounted) {
+                    setState(() => _blackScreenRunning = running == true);
+                  }
+                },
+              ),
+              SettingsTile.navigation(
+                title: const Text('ADB 黑屏'),
+                description: const Text('显示 ADB 命令，手动执行关闭屏幕'),
+                onPressed: (context) async {
+                  await gFFI.invokeMethod(AndroidChannel.kCopyDisplayToggleDex);
+
+                  showDialog(
+                    context: context,
+                    builder: (context) => AlertDialog(
+                      title: const Text('ADB 命令'),
+                      content: const SingleChildScrollView(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Text('关闭屏幕：'),
+                            SelectableText('adb shell CLASSPATH=/storage/emulated/0/DisplayToggle.dex app_process / DisplayToggle 0',
+                                style: TextStyle(fontFamily: 'monospace')),
+                            SizedBox(height: 12),
+                            Text('开启屏幕：'),
+                            SelectableText('adb shell CLASSPATH=/storage/emulated/0/DisplayToggle.dex app_process / DisplayToggle 2',
+                                style: TextStyle(fontFamily: 'monospace')),
+                          ],
+                        ),
+                      ),
+                      actions: [
+                        TextButton(
+                          onPressed: () => Navigator.pop(context),
+                          child: const Text('关闭'),
+                        ),
+                      ],
+                    ),
+                  );
+                },
+              ),
+            ],
+          ),
+      ]),
+    );
+  }
 }

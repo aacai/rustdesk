@@ -717,6 +717,13 @@ pub fn session_send_chat(session_id: SessionID, text: String) {
     }
 }
 
+// call signaling (client mode)
+pub fn session_send_call_signal(session_id: SessionID, data: String) {
+    if let Some(session) = sessions::get_session_by_session_id(&session_id) {
+        session.send_call_signal(data);
+    }
+}
+
 // Terminal functions
 pub fn session_open_terminal(session_id: SessionID, terminal_id: i32, rows: u32, cols: u32) {
     if let Some(session) = sessions::get_session_by_session_id(&session_id) {
@@ -2264,6 +2271,11 @@ pub fn cm_send_chat(conn_id: i32, msg: String) {
     crate::ui_cm_interface::send_chat(conn_id, msg);
 }
 
+pub fn cm_send_call_signal(conn_id: i32, data: String) {
+    #[cfg(not(any(target_os = "ios")))]
+    crate::ui_cm_interface::send_call_signal(conn_id, data);
+}
+
 pub fn cm_login_res(conn_id: i32, res: bool) {
     #[cfg(not(any(target_os = "ios")))]
     if res {
@@ -3160,6 +3172,53 @@ pub mod server_side {
             "".into()
         };
         return env.new_string(res).unwrap_or_default().into_raw();
+    }
+
+    #[no_mangle]
+    pub unsafe extern "system" fn Java_ffi_FFI_getOption(
+        env: JNIEnv,
+        _class: JClass,
+        key: JString,
+    ) -> jstring {
+        let mut env = env;
+        let res = if let Ok(key) = env.get_string(&key) {
+            let key: String = key.into();
+            super::get_option(key)
+        } else {
+            "".into()
+        };
+        return env.new_string(res).unwrap_or_default().into_raw();
+    }
+
+    #[no_mangle]
+    pub unsafe extern "system" fn Java_ffi_FFI_setOption(
+        env: JNIEnv,
+        _class: JClass,
+        key: JString,
+        value: JString,
+    ) {
+        let mut env = env;
+        if let (Ok(key), Ok(value)) = (env.get_string(&key), env.get_string(&value)) {
+            let key: String = key.into();
+            let value: String = value.into();
+            // Same path as Flutter mainSetOption (restarts rendezvous when needed).
+            super::main_set_option(key, value);
+        }
+    }
+
+    #[no_mangle]
+    pub unsafe extern "system" fn Java_ffi_FFI_setLocalOption(
+        env: JNIEnv,
+        _class: JClass,
+        key: JString,
+        value: JString,
+    ) {
+        let mut env = env;
+        if let (Ok(key), Ok(value)) = (env.get_string(&key), env.get_string(&value)) {
+            let key: String = key.into();
+            let value: String = value.into();
+            super::main_set_local_option(key, value);
+        }
     }
 
     #[no_mangle]

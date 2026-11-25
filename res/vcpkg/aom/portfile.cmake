@@ -12,7 +12,7 @@ if(DEFINED ENV{USE_AOM_391})
     set(AOM_CONFIG_PATH "lib/cmake/aom")
     vcpkg_from_git(
         OUT_SOURCE_PATH SOURCE_PATH
-        URL "https://aomedia.googlesource.com/aom"
+        URL "https://github.com/wide-video/aom"
         REF 8ad484f8a18ed1853c094e7d3a4e023b2a92df28 # 3.9.1
         PATCHES
             aom-uninitialized-pointer-3.9.1.diff
@@ -21,10 +21,12 @@ if(DEFINED ENV{USE_AOM_391})
     )
 else()
     set(AOM_CONFIG_PATH "lib/cmake/AOM")
-    vcpkg_from_git(
+    vcpkg_from_github(
         OUT_SOURCE_PATH SOURCE_PATH
-        URL "https://aomedia.googlesource.com/aom"
-        REF 03087864cf4bea6abb0d28f95cf7843511413d8f # 3.14.1
+        REPO wide-video/aom
+        REF 03087864cf4bea6abb0d28f95cf7843511413d8f
+        SHA512 214930e1e329c9055b1e01363cd8c98101851c348ec4c7128bd7b143746b627737845025a144ed2680680ada4695207213ad57a59246b35451642fd67e3ed8df
+        HEAD_REF main
         PATCHES
             aom-uninitialized-pointer.diff
     )

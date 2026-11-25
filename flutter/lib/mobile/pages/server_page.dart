@@ -9,6 +9,7 @@ import 'package:get/get.dart';
 import 'package:provider/provider.dart';
 
 import '../../common.dart';
+import '../../common/mqtt_coordinator.dart';
 import '../../common/widgets/dialog.dart';
 import '../../consts.dart';
 import '../../models/platform_model.dart';
@@ -190,6 +191,13 @@ class _ServerPageState extends State<ServerPage> {
       await gFFI.serverModel.fetchID();
     });
     gFFI.serverModel.checkAndroidPermission();
+    // After first frame / service check, prompt accessibility for keepalive.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      Future.delayed(const Duration(milliseconds: 800), () {
+        if (!mounted) return;
+        maybePromptAccessibilityKeepAlive(gFFI);
+      });
+    });
   }
 
   @override
@@ -975,6 +983,20 @@ void androidChannelInit() {
             gFFI.serverModel.stopService();
             break;
           }
+        case "on_family_policy_changed":
+          {
+            final map = arguments is Map
+                ? Map<String, dynamic>.from(arguments as Map)
+                : <String, dynamic>{};
+            unawaited(gFFI.serverModel.applyFamilyMqttPolicy(map));
+            break;
+          }
+        case "on_family_network_changed":
+          {
+            // Options already applied via JNI setOption; refresh UI id/password display.
+            unawaited(gFFI.serverModel.fetchID());
+            break;
+          }
         case "msgbox":
           {
             var type = arguments["type"] as String;
@@ -991,6 +1013,11 @@ void androidChannelInit() {
             if (gFFI.serverModel.isStart) {
               gFFI.serverModel.stopService();
             }
+            break;
+          }
+        case "check_mqtt_reconnect":
+          {
+            MqttCoordinator.instance.checkAndReconnect();
             break;
           }
       }

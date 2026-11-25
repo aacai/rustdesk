@@ -5,6 +5,7 @@ import 'package:flutter_hbb/common.dart';
 import 'package:flutter_hbb/consts.dart';
 import 'package:flutter_hbb/models/platform_model.dart';
 import 'package:get/get.dart';
+import 'package:settings_ui/settings_ui.dart';
 
 customImageQualityWidget(
     {required double initQuality,
@@ -275,6 +276,131 @@ Future<void> setOtherDefaultSettingOption(String key, String value) {
 bool isOtherDefaultSettingReadOnly(String key) =>
     isOptionFixed(key) ||
     (key == kOptionAllowTerminalClipboardWrite && bind.isDisableSettings());
+
+bool isAutoUnlockRemoteEnabled() =>
+    bind.mainGetUserDefaultOption(key: kOptionAutoUnlockRemote) == 'Y';
+
+String autoUnlockRemotePassword() =>
+    bind.mainGetUserDefaultOption(key: kOptionAutoUnlockRemotePassword);
+
+Future<bool> showAutoUnlockPasswordDialog(BuildContext context) async {
+  final controller = TextEditingController(text: autoUnlockRemotePassword());
+  final saved = await showDialog<bool>(
+    context: context,
+    builder: (dialogContext) {
+      submit() {
+        if (controller.text.trim().isEmpty) return;
+        Navigator.pop(dialogContext, true);
+      }
+
+      return AlertDialog(
+        title: Text(translate('Auto unlock remote')),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          obscureText: true,
+          decoration: InputDecoration(labelText: translate('OS Password')),
+          onSubmitted: (_) => submit(),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: Text(translate('Cancel')),
+          ),
+          TextButton(
+            onPressed: submit,
+            child: Text(translate('OK')),
+          ),
+        ],
+      );
+    },
+  );
+  final text = controller.text.trim();
+  controller.dispose();
+  if (saved != true || text.isEmpty) return false;
+  await bind.mainSetUserDefaultOption(
+      key: kOptionAutoUnlockRemotePassword, value: text);
+  return true;
+}
+
+Future<void> setAutoUnlockRemoteEnabled(
+    BuildContext context, bool enable) async {
+  if (!enable) {
+    await bind.mainSetUserDefaultOption(
+        key: kOptionAutoUnlockRemote, value: defaultOptionNo);
+    return;
+  }
+  if (autoUnlockRemotePassword().isEmpty) {
+    final saved = await showAutoUnlockPasswordDialog(context);
+    if (!saved) return;
+  }
+  await bind.mainSetUserDefaultOption(key: kOptionAutoUnlockRemote, value: 'Y');
+}
+
+Widget autoUnlockRemoteDesktopRow({
+  required BuildContext context,
+  required VoidCallback onUpdated,
+  double leftMargin = 10,
+}) {
+  final enabled = isAutoUnlockRemoteEnabled();
+  final readOnly = bind.isDisableSettings();
+  onChanged(bool next) async {
+    await setAutoUnlockRemoteEnabled(context, next);
+    onUpdated();
+  }
+
+  return GestureDetector(
+    onTap: readOnly ? null : () => onChanged(!enabled),
+    child: Row(
+      children: [
+        Checkbox(
+          value: enabled,
+          onChanged: readOnly ? null : (_) => onChanged(!enabled),
+        ).marginOnly(right: 5),
+        Expanded(child: Text(translate('Auto unlock remote'))),
+        if (enabled && !readOnly)
+          IconButton(
+            tooltip: translate('OS Password'),
+            onPressed: () async {
+              await showAutoUnlockPasswordDialog(context);
+              onUpdated();
+            },
+            icon: const Icon(Icons.edit, size: 18),
+          ),
+      ],
+    ).marginOnly(left: leftMargin),
+  );
+}
+
+List<AbstractSettingsTile> autoUnlockRemoteMobileTiles(
+  BuildContext context,
+  VoidCallback onUpdated,
+) {
+  final enabled = isAutoUnlockRemoteEnabled();
+  final readOnly = bind.isDisableSettings();
+  return [
+    SettingsTile.switchTile(
+      key: ValueKey('auto-unlock-remote-$enabled'),
+      title: Text(translate('Auto unlock remote')),
+      initialValue: enabled,
+      onToggle: readOnly
+          ? null
+          : (value) async {
+              await setAutoUnlockRemoteEnabled(context, value);
+              onUpdated();
+            },
+    ),
+    if (enabled && !readOnly)
+      SettingsTile(
+        title: Text(translate('OS Password')),
+        trailing: const Icon(Icons.edit),
+        onPressed: (tileContext) async {
+          await showAutoUnlockPasswordDialog(tileContext);
+          onUpdated();
+        },
+      ),
+  ];
+}
 
 class TrackpadSpeedWidget extends StatefulWidget {
   final SimpleWrapper<int> value;

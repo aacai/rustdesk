@@ -149,6 +149,8 @@ const String kOptionEnableFileCopyPaste = "enable-file-copy-paste";
 // "Settings -> Display -> Other default options"
 const String kOptionDisableClipboard = "disable_clipboard";
 const String kOptionLockAfterSessionEnd = "lock_after_session_end";
+const String kOptionAutoUnlockRemote = "auto-unlock-remote";
+const String kOptionAutoUnlockRemotePassword = "auto-unlock-remote-password";
 const String kOptionPrivacyMode = "privacy_mode";
 const String kOptionTouchMode = "touch-mode";
 const String kOptionI444 = "i444";
@@ -172,6 +174,15 @@ const String kOptionEnableConfirmClosingTabs = "enable-confirm-closing-tabs";
 const String kOptionEnablePortForwardMux = "enable-port-forward-mux";
 const String kOptionAllowAlwaysSoftwareRender = "allow-always-software-render";
 const String kOptionEnableCheckUpdate = "enable-check-update";
+const String kOptionMqttHeartbeat = "mqtt-heartbeat";
+const String kOptionMqttAutoAccept = "mqtt-auto-accept";
+const String kOptionMqttAutoAllowAny = "mqtt-auto-allow-any";
+const String kOptionMqttAutoAnswerVoice = "mqtt-auto-answer-voice";
+const String kOptionMqttDenyLanDiscovery = "mqtt-deny-lan-discovery";
+const String kOptionMqttWatchdog = "mqtt-watchdog";
+const String kOptionMqttLogEnabled = "mqtt-log-enabled";
+const String kOptionMqttConfigCheckIntervalMin = "mqtt-config-check-interval-min";
+const String kOptionMqttHeartbeatIntervalSec = "mqtt-heartbeat-interval-sec";
 const String kOptionAllowAutoUpdate = "allow-auto-update";
 const String kOptionAllowRemoveWallpaper = "allow-remove-wallpaper";
 const String kOptionStopService = "stop-service";
@@ -230,6 +241,9 @@ const String kOptionToggleShowMyCursor = "show-my-cursor";
 const String kOptionDisableFloatingWindow = "disable-floating-window";
 
 const String kOptionKeepScreenOn = "keep-screen-on";
+
+/// Once user taps "暂不" on the accessibility keepalive prompt.
+const String kOptionAndroidA11yPromptDismissed = "android-a11y-prompt-dismissed";
 
 const String kOptionKeepAwakeDuringIncomingSessions = "keep-awake-during-incoming-sessions";
 const String kOptionKeepAwakeDuringOutgoingSessions = "keep-awake-during-outgoing-sessions";
@@ -458,10 +472,12 @@ const kActionApplicationDetailsSettings =
 const kActionAccessibilitySettings = "android.settings.ACCESSIBILITY_SETTINGS";
 
 const kRecordAudio = "android.permission.RECORD_AUDIO";
+const kCamera = "android.permission.CAMERA";
 const kRequestIgnoreBatteryOptimizations =
     "android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS";
 const kSystemAlertWindow = "android.permission.SYSTEM_ALERT_WINDOW";
 const kAndroid13Notification = "android.permission.POST_NOTIFICATIONS";
+const kManageExternalStorage = "android.permission.MANAGE_EXTERNAL_STORAGE";
 
 /// Android channel invoke type key
 class AndroidChannel {
@@ -469,6 +485,21 @@ class AndroidChannel {
   static final kGetStartOnBootOpt = "get_start_on_boot_opt";
   static final kSetStartOnBootOpt = "set_start_on_boot_opt";
   static final kSyncAppDirConfigPath = "sync_app_dir";
+  static final kSetFamilyPolicy = "set_family_policy";
+  static final kStartMqttForeground = "start_mqtt_foreground";
+  static final kStopMqttForeground = "stop_mqtt_foreground";
+  static final kRequestBatteryOptimization = "request_battery_optimization";
+  static final kIsBatteryOptimizationIgnored = "is_battery_optimization_ignored";
+  static final kEnableZeroBrightness = "enable_zero_brightness";
+  static final kDisableZeroBrightness = "disable_zero_brightness";
+  static final kIsZeroBrightnessActive = "is_zero_brightness_active";
+  static final kStartBlackScreen = "start_black_screen";
+  static final kStopBlackScreen = "stop_black_screen";
+  static final kIsBlackScreenRunning = "is_black_screen_running";
+  static final kIsShizukuInstalled = "is_shizuku_installed";
+  static final kShizukuScreenOff = "shizuku_screen_off";
+  static final kShizukuScreenOn = "shizuku_screen_on";
+  static final kCopyDisplayToggleDex = "copy_display_toggle_dex";
   static final kPickImportFiles = "pick_import_files";
   static final kImportFile = "import_file";
   static final kExportFile = "export_file";

@@ -4,6 +4,7 @@
 .idea
 .DS_Store
 .env
+/key.jks
 libsciter-gtk.so
 src/ui/inline.rs
 extractor
@@ -53,6 +54,7 @@ lib/generated_bridge.dart
 examples/**/target/
 # ===
 vcpkg_installed
+_vcpkg_installed/
 flutter/lib/generated_plugin_registrant.dart
 libsciter.dylib
 flutter/web/

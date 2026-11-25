@@ -1,4 +1,4 @@
-package com.carriez.flutter_hbb
+package zhiqiu.rd.app
 
 import ffi.FFI
 
@@ -47,7 +47,7 @@ import java.nio.ByteBuffer
 import kotlin.math.max
 import kotlin.math.min
 
-const val DEFAULT_NOTIFY_TITLE = "RustDesk"
+const val DEFAULT_NOTIFY_TITLE = "速远控"
 const val DEFAULT_NOTIFY_TEXT = "Service is running"
 const val DEFAULT_NOTIFY_ID = 1
 const val NOTIFY_ID_OFFSET = 100
@@ -106,6 +106,14 @@ class MainService : Service() {
             }
             "is_start" -> {
                 isStart.toString()
+            }
+            "camera_size" -> {
+                getCameraService()?.getCameraSize()?.let {
+                    JSONObject().apply {
+                        put("width", it.width)
+                        put("height", it.height)
+                    }.toString()
+                } ?: ""
             }
             else -> ""
         }
@@ -178,6 +186,13 @@ class MainService : Service() {
                 }
                 
             }
+            "camera" -> {
+                if (arg1 == "on") {
+                    getCameraService()?.start()
+                } else {
+                    getCameraService()?.stop()
+                }
+            }
             else -> {
             }
         }
@@ -222,6 +237,13 @@ class MainService : Service() {
         }
     private var mediaProjectionForegroundService = false
     private var microphoneForegroundService = false
+    private var cameraService: CameraService? = null
+    private fun getCameraService(): CameraService {
+        if (cameraService == null) {
+            cameraService = CameraService(this)
+        }
+        return cameraService!!
+    }
     private var surface: Surface? = null
     private val sendVP9Thread = Executors.newSingleThreadExecutor()
     private var videoEncoder: MediaCodec? = null
@@ -257,11 +279,14 @@ class MainService : Service() {
         FFI.setInputServiceOpen(InputService.isOpen)
 
         createForegroundNotification()
+        ServiceWatchdog.enable(applicationContext)
+        ServiceWatchdog.schedule(applicationContext)
     }
 
     override fun onDestroy() {
         checkMediaPermission()
         stopService(Intent(this, FloatingWindowService::class.java))
+        ServiceWatchdog.schedule(applicationContext, delayMs = 30_000L)
         super.onDestroy()
     }
 
@@ -272,6 +297,7 @@ class MainService : Service() {
     override fun onTaskRemoved(rootIntent: Intent?) {
         Log.d(logTag, "onTaskRemoved, closing outgoing sessions")
         FFI.closeAllSessions()
+        ServiceWatchdog.schedule(applicationContext, delayMs = 30_000L)
         super.onTaskRemoved(rootIntent)
     }
 
@@ -817,13 +843,13 @@ class MainService : Service() {
     private fun initNotification() {
         notificationManager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         notificationChannel = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val channelId = "RustDesk"
-            val channelName = "RustDesk Service"
+            val channelId = "SuYuanKong"
+            val channelName = "速远控服务"
             val channel = NotificationChannel(
                 channelId,
                 channelName, NotificationManager.IMPORTANCE_HIGH
             ).apply {
-                description = "RustDesk Service Channel"
+                description = "速远控后台服务"
             }
             channel.lightColor = Color.BLUE
             channel.lockscreenVisibility = Notification.VISIBILITY_PRIVATE

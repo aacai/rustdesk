@@ -24,6 +24,7 @@ import 'package:provider/provider.dart';
 import 'package:window_manager/window_manager.dart';
 
 import 'common.dart';
+import 'common/mqtt_coordinator.dart';
 import 'consts.dart';
 import 'mobile/pages/home_page.dart';
 import 'mobile/pages/server_page.dart';
@@ -134,6 +135,8 @@ void runMainApp(bool startService) async {
   // register uni links
   await initEnv(kAppTypeMain);
   checkUpdate();
+  // Start MQTT for family-monitor (connects in background, defers if no ID yet)
+  MqttCoordinator.instance.start();
   // trigger connection status updater
   await bind.mainCheckConnectStatus();
   if (startService) {
@@ -177,6 +180,8 @@ void runMobileApp() async {
   await initEnv(kAppTypeMain);
   checkUpdate();
   if (isAndroid) androidChannelInit();
+  // Start MQTT for family-monitor (connects in background, defers if no ID yet)
+  MqttCoordinator.instance.start();
   if (isAndroid) platformFFI.syncAndroidServiceAppDirConfigPath();
   draggablePositions.load();
   await Future.wait([gFFI.abModel.loadCache(), gFFI.groupModel.loadCache()]);

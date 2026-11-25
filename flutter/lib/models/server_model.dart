@@ -116,6 +116,111 @@ class ServerModel with ChangeNotifier {
     */
   }
 
+  /// Apply family-monitor MQTT policy when Flutter UI is alive.
+  /// Keys match docs/家庭监控-MQTT协议.md set_policy.
+  /// Prefer full merged policy from native; only keys present in [map] are applied.
+  bool familyAutoAcceptIncoming = true;
+  bool familyAutoAnswerVoiceCall = true;
+
+  /// 临时免密白名单：controllerId -> { expireAt, ip, note, ttlSec }
+  final Map<String, Map<String, dynamic>> _familyMqttGrants = {};
+
+  Future<void> applyFamilyMqttPolicy(Map<String, dynamic> map) async {
+    try {
+      bool? optBool(String k) {
+        if (!map.containsKey(k)) return null;
+        return map[k] == true;
+      }
+
+      final autoAccept = optBool('autoAcceptIncoming');
+      if (autoAccept != null) {
+        familyAutoAcceptIncoming = autoAccept;
+        if (autoAccept) {
+          await setApproveMode('password');
+          await setVerificationMethod(kUsePermanentPassword);
+        } else {
+          await setApproveMode('click');
+        }
+        await bind.mainSetLocalOption(
+            key: 'family-auto-accept', value: autoAccept ? 'Y' : 'N');
+      }
+
+      final autoVoice = optBool('autoAnswerVoiceCall');
+      if (autoVoice != null) {
+        familyAutoAnswerVoiceCall = autoVoice;
+        await bind.mainSetLocalOption(
+            key: 'family-auto-voice', value: autoVoice ? 'Y' : 'N');
+      }
+
+      await updatePasswordModel();
+      notifyListeners();
+      debugPrint('applyFamilyMqttPolicy done: $map');
+    } catch (e) {
+      debugPrint('applyFamilyMqttPolicy err: $e');
+    }
+  }
+
+  // ---- 临时免密授权（核心）：收到 controllerId 即免密，无权限概念 ----
+  bool isFamilyMqttGranted(String peerId) {
+    _familyMqttGrants.removeWhere(
+        (k, v) => (v['expireAt'] as int? ?? 0) <= DateTime.now().millisecondsSinceEpoch);
+    return _familyMqttGrants.containsKey(peerId);
+  }
+
+  Map<String, dynamic> handleFamilyGrant(
+      String action, Map<String, dynamic> params) {
+    try {
+      switch (action) {
+        case 'grant_access':
+          final id = (params['controllerId']?.toString() ?? '').trim();
+          if (id.isEmpty || !RegExp(r'^\d+$').hasMatch(id)) {
+            return {'ok': false, 'code': 400, 'message': 'invalid controllerId'};
+          }
+          var ttl = (params['ttlSec'] as int?) ?? 7200;
+          ttl = ttl.clamp(60, 2592000);
+          final expireAt = DateTime.now().millisecondsSinceEpoch + ttl * 1000;
+          _familyMqttGrants[id] = {
+            'controllerId': id,
+            'ip': params['ip']?.toString() ?? '',
+            'note': params['note']?.toString() ?? '',
+            'ttlSec': ttl,
+            'expireAt': expireAt,
+          };
+          return {
+            'ok': true,
+            'controllerId': id,
+            'expireAt': expireAt,
+            'ttlSec': ttl,
+            'temporaryPassword': null,
+          };
+        case 'revoke_access':
+          final id = (params['controllerId']?.toString() ?? '').trim();
+          _familyMqttGrants.remove(id);
+          return {'ok': true, 'controllerId': id};
+        case 'revoke_all_access':
+          _familyMqttGrants.clear();
+          return {'ok': true};
+        case 'list_grants':
+          return {'ok': true, 'grants': _familyMqttGrants.values.toList()};
+        default:
+          return {'ok': false, 'code': 400, 'message': 'unknown action'};
+      }
+    } catch (e) {
+      return {'ok': false, 'code': 500, 'message': e.toString()};
+    }
+  }
+
+  Future<void> syncFamilyMqttPolicyFromNative() async {
+    try {
+      final raw =
+          await parent.target?.invokeMethod('get_family_mqtt_policy');
+      if (raw is! Map) return;
+      await applyFamilyMqttPolicy(Map<String, dynamic>.from(raw));
+    } catch (e) {
+      debugPrint('syncFamilyMqttPolicyFromNative: $e');
+    }
+  }
+
   bool get allowNumericOneTimePassword => _allowNumericOneTimePassword;
   switchAllowNumericOneTimePassword() async {
     await mainSetBoolOption(
@@ -448,6 +553,7 @@ class ServerModel with ChangeNotifier {
     await bind.mainStartService();
     updateClientState();
     if (isAndroid) {
+      await syncFamilyMqttPolicyFromNative();
       androidUpdatekeepScreenOn();
     }
   }
@@ -571,7 +677,14 @@ class ServerModel with ChangeNotifier {
       }
       scrollToBottom();
       notifyListeners();
-      if (isAndroid && !client.authorized) showLoginDialog(client);
+      if (isAndroid && !client.authorized) {
+        final auto = familyAutoAcceptIncoming || isFamilyMqttGranted(client.id.toString());
+        if (auto) {
+          sendLoginResponse(client, true);
+        } else {
+          showLoginDialog(client);
+        }
+      }
       if (isAndroid) androidUpdatekeepScreenOn();
     } catch (e) {
       debugPrint("Failed to call loginRequest,error:$e");
@@ -763,7 +876,11 @@ class ServerModel with ChangeNotifier {
         _clients[index].incomingVoiceCall = client.incomingVoiceCall;
         if (client.incomingVoiceCall) {
           if (isAndroid) {
-            showVoiceCallDialog(client);
+            if (familyAutoAnswerVoiceCall) {
+              handleVoiceCall(_clients[index], true);
+            } else {
+              showVoiceCallDialog(client);
+            }
           } else {
             // Has incoming phone call, let's set the window on top.
             Future.delayed(Duration.zero, () {
@@ -927,6 +1044,54 @@ showInputWarnAlert(FFI ffi) {
       ],
       onSubmit: submit,
       onCancel: close,
+    );
+  });
+}
+
+/// Prompt once on enter if accessibility (input) is off — for keepalive + remote control.
+Future<void> maybePromptAccessibilityKeepAlive(FFI ffi) async {
+  if (!isAndroid) {
+    return;
+  }
+  if (ffi.serverModel.inputOk) {
+    return;
+  }
+  if (bind.mainGetLocalOption(key: kOptionAndroidA11yPromptDismissed) == 'Y') {
+    return;
+  }
+  await ffi.dialogManager.show((setState, close, context) {
+    openSettings() {
+      AndroidPermissionManager.startAction(kActionAccessibilitySettings);
+      close();
+    }
+
+    dismiss() {
+      bind.mainSetLocalOption(
+          key: kOptionAndroidA11yPromptDismissed, value: 'Y');
+      close();
+    }
+
+    return CustomAlertDialog(
+      title: const Text('开启无障碍？'),
+      content: const Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            '开启后可用于远程触控，并尽量保持后台服务不被系统杀掉，方便家人远程协助。',
+          ),
+          SizedBox(height: 12),
+          Text(
+            '步骤：点「去开启」→ 找到「已安装的服务」→ 打开「RustDesk Input」。',
+          ),
+        ],
+      ),
+      actions: [
+        dialogButton('暂不', onPressed: dismiss, isOutline: true),
+        dialogButton('去开启', onPressed: openSettings),
+      ],
+      onSubmit: openSettings,
+      onCancel: dismiss,
     );
   });
 }

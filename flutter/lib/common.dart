@@ -1519,11 +1519,19 @@ class AndroidPermissionManager {
   static Timer? _timer;
   static var _current = "";
 
-  static Future<bool> check(String type) {
-    if (isDesktop || isWeb) {
-      return Future.value(true);
+  static bool isWaitingFile() {
+    if (_completer != null) {
+      return !_completer!.isCompleted && _current == kManageExternalStorage;
     }
-    return gFFI.invokeMethod("check_permission", type);
+    return false;
+  }
+
+  static Future<bool> check(String type) async {
+    if (isDesktop || isWeb) {
+      return true;
+    }
+    final r = await gFFI.invokeMethod("check_permission", type);
+    return r == true;
   }
 
   // startActivity goto Android Setting's page to request permission manually by user
@@ -1667,6 +1675,20 @@ mainSetLocalBoolOption(String key, bool value) async {
 
 bool mainGetLocalBoolOptionSync(String key) {
   return option2bool(key, bind.mainGetLocalOption(key: key));
+}
+
+/// 家庭监控设置变更通知。MQTT 收到指令写入本地选项后调用对应 *AndNotify 方法，
+/// 「家庭监控」设置页监听此通知以实时刷新对应开关；不在该页面时本地存储已更新。
+final familyMonitorChanged = ValueNotifier<int>(0);
+
+Future<void> mainSetLocalOptionAndNotify(String key, String value) async {
+  await bind.mainSetLocalOption(key: key, value: value);
+  familyMonitorChanged.value++;
+}
+
+Future<void> mainSetLocalBoolOptionAndNotify(String key, bool value) async {
+  await mainSetLocalBoolOption(key, value);
+  familyMonitorChanged.value++;
 }
 
 bool mainGetPeerBoolOptionSync(String id, String key) {

@@ -46,7 +46,7 @@ use hbb_common::{
     anyhow::{anyhow, Context},
     bail,
     config::{
-        self, use_ws, Config, LocalConfig, PeerConfig, PeerInfoSerde, Resolution,
+        self, use_ws, Config, LocalConfig, PeerConfig, PeerInfoSerde, Resolution, UserDefaultConfig,
         CONNECT_TIMEOUT, READ_TIMEOUT, RELAY_PORT, RENDEZVOUS_PORT, RENDEZVOUS_SERVERS,
     },
     futures::future::{select_ok, BoxFuture, FutureExt},
@@ -3042,10 +3042,19 @@ impl LoginConfigHandler {
         let a = !self.get_option("auto-login").is_empty();
         let p = self.get_option("os-password");
         if !p.is_empty() && l && a {
-            p
-        } else {
-            "".to_owned()
+            return p;
         }
+        // Independent global "Auto unlock remote" (does not require lock-after-session-end).
+        if !self.view_only.v {
+            let defaults = UserDefaultConfig::load();
+            if defaults.get(keys::OPTION_AUTO_UNLOCK_REMOTE) == "Y" {
+                let password = defaults.get(keys::OPTION_AUTO_UNLOCK_REMOTE_PASSWORD);
+                if !password.is_empty() {
+                    return password;
+                }
+            }
+        }
+        "".to_owned()
     }
 
     /// Load [`PeerConfig`].
@@ -5068,24 +5077,12 @@ pub enum Data {
 }
 
 pub async fn confirm_insecure_connection(
-    interface: &impl Interface,
-    receiver: &mut UnboundedReceiver<Data>,
+    _interface: &impl Interface,
+    _receiver: &mut UnboundedReceiver<Data>,
 ) -> bool {
-    interface.msgbox(
-        "insecure-connection-nocancel-hasclose",
-        "Insecure Connection",
-        "conn-e2ee-unavailable-tip",
-        "",
-    );
-    while let Some(data) = receiver.recv().await {
-        match data {
-            Data::ContinueInsecureConnection => return true,
-            Data::RejectInsecureConnection => return false,
-            Data::Close => return false,
-            _ => {}
-        }
-    }
-    false
+    // The prompt can never be answered in a session nobody is watching (auto-accepted
+    // or headless), and waiting for it stalls the connection until the peer resets it.
+    true
 }
 
 /// Keycode for key events.
