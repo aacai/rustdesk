@@ -1,5 +1,8 @@
 #[path = "ipc/auth.rs"]
 mod ipc_auth;
+#[cfg(windows)]
+#[path = "ipc/windows.rs"]
+mod ipc_windows;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 #[path = "ipc/fs.rs"]
 mod ipc_fs;
@@ -59,8 +62,8 @@ use ipc_auth::{active_uid, authorize_service_scoped_ipc_connection};
 use ipc_auth::authorize_user_server_process;
 #[cfg(windows)]
 use ipc_auth::{
-    authorize_windows_main_ipc_connection, portable_service_listener_security_attributes,
-    should_allow_everyone_create_on_windows,
+    authorize_windows_main_ipc_connection, is_windows_main_or_service_ipc,
+    portable_service_listener_security_attributes,
 };
 #[cfg(target_os = "linux")]
 pub(crate) use ipc_auth::{
@@ -614,7 +617,12 @@ fn legacy_hot_measured() -> bool {
 
 #[tokio::main(flavor = "current_thread")]
 pub async fn start(postfix: &str) -> ResultType<()> {
-    let mut incoming = new_listener(postfix).await?;
+    let incoming = new_listener(postfix).await?;
+    start_with_listener(postfix, incoming).await;
+    Ok(())
+}
+
+pub(crate) async fn start_with_listener(postfix: &str, mut incoming: Incoming) {
     loop {
         if let Some(result) = incoming.next().await {
             match result {
@@ -718,8 +726,8 @@ pub async fn new_listener(postfix: &str) -> ResultType<Incoming> {
         {
             if postfix == "_portable_service" {
                 portable_service_listener_security_attributes()
-            } else if should_allow_everyone_create_on_windows(postfix) {
-                SecurityAttributes::allow_everyone_create()
+            } else if is_windows_main_or_service_ipc(postfix) {
+                ipc_windows::listener_security_attributes()
             } else {
                 Ok(SecurityAttributes::empty())
             }
@@ -734,9 +742,8 @@ pub async fn new_listener(postfix: &str) -> ResultType<Incoming> {
         Err(err) => {
             log::error!("Failed to set ipc{} security: {}", postfix, err);
             #[cfg(windows)]
-            if postfix == "_portable_service" {
-                // Fail closed for `_portable_service` when SDDL construction fails.
-                // This endpoint is security-critical and must not start with default ACLs.
+            if postfix == "_portable_service" || is_windows_main_or_service_ipc(postfix) {
+                // Protected endpoints must not start with default ACLs.
                 return Err(err.into());
             }
         }
@@ -1085,15 +1092,29 @@ async fn handle(data: Data, stream: &mut Connection) {
                 if let Some(v) = value.get("privacy-mode-impl-key") {
                     crate::privacy_mode::switch(v);
                 }
+                #[cfg(all(target_os = "linux", feature = "drm"))]
+                let drm_capture_was_on = crate::platform::linux::drm_capture_enabled();
                 if let Err(error) = crate::trusted_devices::config::update_options(value).await {
                     allow_err!(
                         stream
                             .send(&Data::SecurityConfigError(error.to_string()))
                             .await
                     );
+                    // Also after a rejected update: the options can be applied by then.
+                    #[cfg(all(target_os = "linux", feature = "drm"))]
+                    if crate::is_server() {
+                        crate::platform::linux::sync_drm_capture_to_service(drm_capture_was_on)
+                            .await;
+                    }
                     return;
                 }
                 allow_err!(stream.send(&Data::Options(None)).await);
+                // Not from a UI that hosts this IPC itself: its copy of the config can be older
+                // than the service's, and the sync sends all of it.
+                #[cfg(all(target_os = "linux", feature = "drm"))]
+                if crate::is_server() {
+                    crate::platform::linux::sync_drm_capture_to_service(drm_capture_was_on).await;
+                }
             }
         },
         Data::NatType(_) => {
@@ -1538,6 +1559,16 @@ fn user_main_ipc_server_uid() -> ResultType<u32> {
 }
 
 pub async fn connect(ms_timeout: u64, postfix: &str) -> ResultType<ConnectionTmpl<ConnClient>> {
+    #[cfg(windows)]
+    if is_windows_main_or_service_ipc(postfix) {
+        return Ok(ConnectionTmpl::new(
+            timeout(
+                ms_timeout,
+                ipc_windows::connect(&Config::ipc_path(postfix), postfix),
+            )
+            .await??,
+        ));
+    }
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     {
         let use_user_main_ipc = USE_USER_MAIN_IPC.with(|use_user_main| use_user_main.get());
@@ -2055,6 +2086,14 @@ pub async fn set_options(value: HashMap<String, String>) -> ResultType<()> {
     }
     Config::set_options(value);
     Ok(())
+}
+
+/// For the CLI, a process that just loaded the config. With no `--server` up to apply the change,
+/// as right after an install, nothing else tells the service.
+#[cfg(all(target_os = "linux", feature = "drm"))]
+#[tokio::main(flavor = "current_thread")]
+pub async fn sync_drm_capture_to_service_blocking(was_on: bool) {
+    crate::platform::linux::sync_drm_capture_to_service(was_on).await
 }
 
 #[inline]

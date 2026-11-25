@@ -399,7 +399,7 @@ pub static ref T: std::collections::HashMap<&'static str, &'static str> =
         ("wayland_experiment_tip", "O suporte ao Wayland está em estágio experimental, use o X11 se precisar de acesso autônomo."),
         ("Right click to select tabs", "Clique com o botão direito para selecionar as guias"),
         ("Skipped", "Ignorado"),
-        ("Add to address book", "Adicionar ao livro de endereços"),
+        ("Add to address book", "Adicionar à lista de endereços"),
         ("Group", "Grupo"),
         ("Search", "Buscar"),
         ("Closed manually by web console", "Fechado manualmente pelo console da web"),
@@ -532,7 +532,6 @@ pub static ref T: std::collections::HashMap<&'static str, &'static str> =
         ("Open in new window", "Abrir em uma nova janela"),
         ("Show displays as individual windows", "Mostrar as telas como janelas individuais"),
         ("Use all my displays for the remote session", "Usar todas as telas na sessão remota"),
-        ("selinux_tip", "O SELinux está ativado em seu dispositivo, o que pode impedir que o RustDesk funcione corretamente como dispositivo controlado."),
         ("Change view", "Alterar visualização"),
         ("Big tiles", "Ícones grandes"),
         ("Small tiles", "Ícones pequenos"),
@@ -828,5 +827,11 @@ pub static ref T: std::collections::HashMap<&'static str, &'static str> =
         ("To start a voice call, enable \"Audio capture\" on the \"Screen share\" page.", "Para iniciar uma chamada de voz, ative \"Captura de áudio\" na página \"Compartilhamento de tela\"."),
         ("Auto unlock remote", ""),
         ("Video call", ""),
+        ("Forever", "Permanentemente"),
+        ("username-login-disabled-oidc-unavailable", "O login com nome de usuário e senha está desativado e não há métodos de login OIDC disponíveis."),
+        ("Use DRM screen capture", "Usar captura de tela DRM"),
+        ("drm-capture-tip", "Captura a tela diretamente da placa de vídeo pelo serviço do RustDesk, sem o pedido de compartilhamento de tela do Wayland, inclusive na tela de login. Pode não funcionar em todos os dispositivos; se as conexões continuarem pedindo para compartilhar a tela, desative isto ou use o X11. Alterar isto desconecta as sessões atuais."),
+        ("wayland-drm-tip", "Para acesso autônomo no Wayland, experimente a captura de tela DRM ou use o X11 se não funcionar."),
+        ("login-wayland-drm-tip", "Para acessar a tela de login do Wayland, experimente a captura de tela DRM ou mude-a para o X11."),
     ].iter().cloned().collect();
 }

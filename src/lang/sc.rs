@@ -532,7 +532,6 @@ pub static ref T: std::collections::HashMap<&'static str, &'static str> =
         ("Open in new window", "Aberi in una ventana noa"),
         ("Show displays as individual windows", "Mustra sos ischermos comente ventanas individuales"),
         ("Use all my displays for the remote session", "In sa sessione remota imprea totu sos ischermos"),
-        ("selinux_tip", "In custu dispositivu est abilitadu SELinux, chi diat pòdere su funtzionamentu curretu de RustDesk comente ala controllada."),
         ("Change view", "Modìfica vista"),
         ("Big tiles", "Iconas mannas"),
         ("Small tiles", "Iconas minores"),
@@ -638,7 +637,7 @@ pub static ref T: std::collections::HashMap<&'static str, &'static str> =
         ("d3d_render_tip", "Cando sa renderizatzione D3D est abilitada, s'ischermu de controllu remotu diat pòdere èssere nieddu in unas cantas màchinas"),
         ("Use D3D rendering", "Imprea sa renderizatzione D3D"),
         ("Printer", "Imprentadora"),
-        ("printer-os-requirement-tip", "Pro pòdere impreare s'imprentadora in seddida bisòngiat a installare {} in custu dispositivu."),
+        ("printer-os-requirement-tip", "Pro pòdere impreare s'imprentadora in seddida bisòngiat Windows 10 o una versione prus noa."),
         ("printer-requires-installed-{}-client-tip", "Pro impreare s'imprenta remota, bisòngiat a installare {} in custu dispositivu."),
         ("printer-{}-not-installed-tip", "S'imprentadora {} no est installada"),
         ("printer-{}-ready-tip", "S'imprentadora {} est installada e pronta pro s'impreu."),
@@ -828,5 +827,11 @@ pub static ref T: std::collections::HashMap<&'static str, &'static str> =
         ("To start a voice call, enable \"Audio capture\" on the \"Screen share\" page.", "Pro aviare una mutida de boghe, ativa in sa pàgina \"Cumpartzidura de ischermu\" s’elementu \"Catura de s’àudio\"."),
         ("Auto unlock remote", ""),
         ("Video call", ""),
+        ("Forever", "Pro semper"),
+        ("username-login-disabled-oidc-unavailable", "S'atzessu cun su nùmene utente e sa crae est disabilitadu, e non b'at perunu mètodu de atzessu OIDC a disponimentu."),
+        ("Use DRM screen capture", ""),
+        ("drm-capture-tip", ""),
+        ("wayland-drm-tip", ""),
+        ("login-wayland-drm-tip", ""),
     ].iter().cloned().collect();
 }

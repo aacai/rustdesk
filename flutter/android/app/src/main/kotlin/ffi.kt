@@ -32,4 +32,6 @@ object FFI {
     external fun setLocalOption(key: String, value: String)
     external fun onClipboardUpdate(clips: ByteBuffer)
     external fun isServiceClipboardEnabled(): Boolean
+    external fun setDocumentLogsEnabled(enabled: Boolean)
+    external fun setInputServiceOpen(open: Boolean)
 }

@@ -7,6 +7,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_hbb/common/shared_state.dart';
 import 'package:flutter_hbb/desktop/widgets/tabbar_widget.dart';
+import 'package:flutter_hbb/desktop/widgets/windows_cm_window_position.dart';
 import 'package:flutter_hbb/mobile/pages/home_page.dart';
 import 'package:flutter_hbb/models/platform_model.dart';
 import 'package:flutter_hbb/models/state_model.dart';
@@ -18,6 +19,7 @@ import 'package:flutter_svg/flutter_svg.dart';
 import '../consts.dart';
 import '../common.dart';
 import '../common/widgets/overlay.dart';
+import '../desktop/pages/server_page.dart' show checkClickTime;
 import '../main.dart';
 import 'model.dart';
 
@@ -141,8 +143,15 @@ class ChatModel with ChangeNotifier {
             user: me,
             createdAt: DateTime.now(),
           );
-          send(message);
-          textController.clear();
+          if (isConnManager) {
+            checkSend(() {
+              send(message);
+              textController.clear();
+            });
+          } else {
+            send(message);
+            textController.clear();
+          }
           return KeyEventResult.handled;
         }
 
@@ -317,8 +326,12 @@ class ChatModel with ChangeNotifier {
       _isShowCMSidePage = !_isShowCMSidePage;
       notifyListeners();
       await windowManager.show();
-      await windowManager.setSizeAlignment(
-          kConnectionManagerWindowSizeClosedChat, Alignment.topRight);
+      if (isWindows) {
+        await setWindowsCmWindowBounds(kConnectionManagerWindowSizeClosedChat);
+      } else {
+        await windowManager.setSizeAlignment(
+            kConnectionManagerWindowSizeClosedChat, Alignment.topRight);
+      }
     } else {
       final currentSelectedTab =
           gFFI.serverModel.tabController.state.value.selectedTabInfo;
@@ -329,8 +342,12 @@ class ChatModel with ChangeNotifier {
       }
       requestChatInputFocus();
       await windowManager.show();
-      await windowManager.setSizeAlignment(
-          kConnectionManagerWindowSizeOpenChat, Alignment.topRight);
+      if (isWindows) {
+        await setWindowsCmWindowBounds(kConnectionManagerWindowSizeOpenChat);
+      } else {
+        await windowManager.setSizeAlignment(
+            kConnectionManagerWindowSizeOpenChat, Alignment.topRight);
+      }
       _isShowCMSidePage = !_isShowCMSidePage;
       notifyListeners();
     }
@@ -458,6 +475,20 @@ class ChatModel with ChangeNotifier {
     }
     latestReceivedKey = messagekey;
     notifyListeners();
+  }
+
+  void checkSend(VoidCallback callback) {
+    final id = _currentKey.connId;
+    final text = textController.text;
+    checkClickTime(id, () {
+      if (_currentKey.connId == id &&
+          textController.text == text &&
+          parent.target?.serverModel.clients
+                  .any((client) => client.id == id && !client.disconnected) ==
+              true) {
+        callback();
+      }
+    });
   }
 
   send(ChatMessage message) {
